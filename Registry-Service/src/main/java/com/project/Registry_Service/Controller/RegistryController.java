@@ -1,6 +1,7 @@
 package com.project.Registry_Service.Controller;
 
 import com.project.Registry_Service.DTO.InstanceRegisterRequest;
+import com.project.Registry_Service.Entity.InstanceState;
 import com.project.Registry_Service.Entity.ServiceEntity;
 import com.project.Registry_Service.Entity.ServiceInstanceEntity;
 import com.project.Registry_Service.Repository.ServiceInstanceRepository;
@@ -41,8 +42,9 @@ public class RegistryController
         instance.setBaseUrl(request.getBaseUrl());
         instance.setHealthPath(request.getHealthPath());
         instance.setContainerName(request.getContainerName());
-        instance.setStatus("UP");
-        instance.setLastHeartbeat(System.currentTimeMillis());
+        instance.setState(InstanceState.UP);
+        instance.setMissedHeartBeats(0);
+        instance.setLastHeartBeat(System.currentTimeMillis());
         instance.setResponseTime(0L);
 
         return serviceInstanceRepo.save(instance);
@@ -68,7 +70,7 @@ public class RegistryController
     @GetMapping("/instances/{serviceName}")
     public List<ServiceInstanceEntity> getHealthyInstances(@PathVariable String serviceName)
     {
-        return serviceInstanceRepo.findByServiceNameAndStatus(serviceName,"UP");
+        return serviceInstanceRepo.findByServiceNameAndState(serviceName,InstanceState.UP);
     }
 
     @PostMapping("/heartbeat")
@@ -81,8 +83,7 @@ public class RegistryController
             System.out.println("Heartbeat ignored (instance not registered yet): "+ host + ":" + port);
             return;
         }
-        instance.setLastHeartbeat(System.currentTimeMillis());
-        instance.setStatus("UP");
+        instance.setLastHeartBeat(System.currentTimeMillis());
         serviceInstanceRepo.save(instance);
     }
 

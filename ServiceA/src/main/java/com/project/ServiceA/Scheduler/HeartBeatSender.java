@@ -22,7 +22,7 @@ public class HeartBeatSender
         this.port = port;
     }
 
-    @Scheduled(initialDelay = 15000, fixedDelay = 5000)
+    @Scheduled(initialDelay = 15000, fixedDelay = 15000)
     public void sendHeartBeat()
     {
         String url=registryBase+"/heartbeat?host="+host+"&port="+port;
