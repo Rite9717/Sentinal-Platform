@@ -1,0 +1,30 @@
+spring:
+  application:
+    name: ServiceA
+
+server:
+  port: 9001
+
+# Registry configuration for AWS deployment
+registry:
+  base-url: ${REGISTRY_URL:http://registry-service-internal:8081/registry}
+
+# Service configuration - use EC2 metadata service to get instance details
+service:
+  host: ${EC2_PRIVATE_IP:localhost}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+
+# Logging configuration
+logging:
+  level:
+    com.project.ServiceA: INFO
+  file:
+    name: /var/log/service-a.log

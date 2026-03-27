@@ -11,17 +11,6 @@ import software.amazon.awssdk.services.ec2.Ec2Client;
 @Slf4j
 @Configuration
 public class AwsConfig {
-
-    /**
-     * Creates EC2 client bean with credential provider chain support.
-     * Only created when registry.recovery.ec2.enabled=true
-     * 
-     * Credential provider chain order:
-     * 1. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
-     * 2. System properties (aws.accessKeyId, aws.secretKey)
-     * 3. IAM instance profile (when running on EC2)
-     * 4. AWS credentials file (~/.aws/credentials)
-     */
     @Bean
     @ConditionalOnProperty(name = "registry.recovery.ec2.enabled", havingValue = "true")
     public Ec2Client ec2Client() {

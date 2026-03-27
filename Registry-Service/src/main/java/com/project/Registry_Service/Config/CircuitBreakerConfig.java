@@ -9,16 +9,7 @@ import java.time.Duration;
 @Configuration
 public class CircuitBreakerConfig {
     
-    /**
-     * Configure circuit breaker registry with settings for recovery operations.
-     * 
-     * Configuration:
-     * - Failure rate threshold: 50% (opens after 50% of calls fail)
-     * - Wait duration in open state: 20 minutes (quarantine duration)
-     * - Sliding window size: 10 calls
-     * - Minimum number of calls: 3 (before calculating failure rate)
-     * - Permitted calls in half-open: 1 (test with single call)
-     */
+
     @Bean
     public CircuitBreakerRegistry circuitBreakerRegistry() {
         io.github.resilience4j.circuitbreaker.CircuitBreakerConfig config = 
