@@ -1,0 +1,135 @@
+/* RegisterForm Component Styles */
+
+.register-form {
+  width: 100%;
+  max-width: 400px;
+}
+
+.register-form__field {
+  margin-bottom: 16px;
+}
+
+.register-form__label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+  color: #333;
+  font-size: 14px;
+}
+
+.register-form__input {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 16px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  box-sizing: border-box;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.register-form__input:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+.register-form__input--error {
+  border-color: #dc3545;
+}
+
+.register-form__input--error:focus {
+  border-color: #dc3545;
+  box-shadow: 0 0 0 3px rgba(220, 53, 69, 0.1);
+}
+
+.register-form__input:disabled {
+  background-color: #f5f5f5;
+  cursor: not-allowed;
+}
+
+.register-form__field-error {
+  color: #dc3545;
+  font-size: 14px;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.register-form__field-error::before {
+  content: '⚠';
+  font-size: 16px;
+}
+
+.register-form__submit {
+  width: 100%;
+  padding: 12px 16px;
+  background-color: #007bff;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  margin-bottom: 16px;
+  transition: background-color 0.2s, transform 0.1s;
+}
+
+.register-form__submit:hover:not(:disabled) {
+  background-color: #0056b3;
+}
+
+.register-form__submit:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.register-form__submit:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+.register-form__submit--loading {
+  position: relative;
+  color: transparent;
+}
+
+.register-form__submit--loading::after {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  top: 50%;
+  left: 50%;
+  margin-left: -8px;
+  margin-top: -8px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  border-top-color: transparent;
+  animation: register-form-spinner 0.6s linear infinite;
+}
+
+@keyframes register-form-spinner {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Responsive Design */
+@media (max-width: 480px) {
+  .register-form {
+    max-width: 100%;
+    padding: 0 16px;
+  }
+
+  .register-form__input {
+    font-size: 16px; /* Prevents zoom on iOS */
+  }
+
+  .register-form__submit {
+    padding: 14px 16px;
+  }
+
+  .register-form__field-error {
+    font-size: 13px;
+  }
+}
