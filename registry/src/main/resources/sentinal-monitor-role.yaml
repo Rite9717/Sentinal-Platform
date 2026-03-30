@@ -1,0 +1,37 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  ExternalId:
+    Type: String
+    Description: Unique ID provided by Sentinal
+
+Resources:
+  SentinalMonitorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SentinalMonitorRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: arn:aws:iam::403022520860:root
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      Policies:
+        - PolicyName: SentinalEC2ReadOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeInstanceStatus
+                Resource: "*"
+
+Outputs:
+  RoleArn:
+    Description: "Copy this Role ARN and paste it into Sentinal"
+    Value: !GetAtt SentinalMonitorRole.Arn
