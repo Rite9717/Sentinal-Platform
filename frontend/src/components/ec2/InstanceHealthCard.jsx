@@ -8,8 +8,9 @@ const stateColors = {
   TERMINATED: '#9e9e9e'
 };
 
-export default function InstanceHealthCard({ instance, onUpdate }) {
+export default function InstanceHealthCard({ instance, onUpdate, onDelete }) {
   const [timeInfo, setTimeInfo] = useState({ lastChecked: '', stateChanged: '' });
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     const updateTimes = () => {
@@ -43,6 +44,20 @@ export default function InstanceHealthCard({ instance, onUpdate }) {
     const minutes = Math.floor(remaining / 60000);
     const seconds = Math.floor((remaining % 60000) / 1000);
     return `${minutes}m ${seconds}s`;
+  };
+
+  const handleDelete = async () => {
+    if (!window.confirm(`Are you sure you want to delete "${instance.nickname}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    setDeleting(true);
+    try {
+      await onDelete(instance.id);
+    } catch (error) {
+      alert('Failed to delete instance: ' + (error.message || 'Unknown error'));
+      setDeleting(false);
+    }
   };
 
   return (
@@ -119,6 +134,29 @@ export default function InstanceHealthCard({ instance, onUpdate }) {
         <div>
           <strong>State Changed:</strong> {timeInfo.stateChanged || 'N/A'}
         </div>
+      </div>
+
+      <div style={{ marginTop: '16px' }}>
+        <button
+          onClick={handleDelete}
+          disabled={deleting}
+          style={{
+            width: '100%',
+            padding: '10px',
+            backgroundColor: deleting ? '#ccc' : '#dc3545',
+            color: '#fff',
+            border: 'none',
+            borderRadius: '4px',
+            fontSize: '14px',
+            fontWeight: '500',
+            cursor: deleting ? 'not-allowed' : 'pointer',
+            transition: 'background-color 0.2s'
+          }}
+          onMouseOver={(e) => !deleting && (e.target.style.backgroundColor = '#c82333')}
+          onMouseOut={(e) => !deleting && (e.target.style.backgroundColor = '#dc3545')}
+        >
+          {deleting ? 'Deleting...' : 'Delete Instance'}
+        </button>
       </div>
     </div>
   );

@@ -6,49 +6,45 @@ import com.sentinal.registry.repository.InstanceRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import software.amazon.awssdk.services.ec2.endpoints.internal.Value;
 
 import java.util.Map;
 
 @Service
 @Slf4j
 @RequiredArgsConstructor
-public class InstanceStateService {
-
-    private static final int MAX_SUSPECT_STRIKES = 3;
-    private static final int MAX_QUARANTINE_COUNT = 5;
-    private static final long QUARANTINE_DURATION_MS = 5 * 60 * 1000L; // 5 min
-
+public class InstanceStateService
+{
     private final EC2HealthService ec2HealthService;
     private final InstanceRepository instanceRepository;
     private final InstanceEventPublisher eventPublisher;
 
-    public void evaluateHealth(InstanceEntity instance) {
-
-        // Skip quarantined instances until their time is up
-        if (instance.getState() == MonitorState.QUARANTINED) {
-            if (System.currentTimeMillis() < instance.getQuarantineUntil()) {
+    public void evaluateHealth(InstanceEntity instance)
+    {
+        if (instance.getState() == MonitorState.QUARANTINED)
+        {
+            if (System.currentTimeMillis() < instance.getQuarantineUntil())
+            {
                 log.debug("Instance {} still quarantined, skipping", instance.getInstanceId());
                 return;
             }
-            // Quarantine lifted — move back to SUSPECT for re-evaluation
             log.info("Quarantine lifted for {}, re-evaluating", instance.getInstanceId());
+            instance.setSuspectCount(0);
             transitionTo(instance, MonitorState.SUSPECT);
         }
 
-        // Run the actual AWS health check
-        boolean healthy = performHealthCheck(instance);
+        Map<String, Object> health = performHealthCheck(instance);
+        boolean healthy = Boolean.TRUE.equals(health.get("healthy"));
         instance.setLastCheckedAt(System.currentTimeMillis());
 
         if (healthy) {
             handleHealthy(instance);
         } else {
-            handleUnhealthy(instance);
+            handleUnhealthy(instance, health);
         }
 
         instanceRepository.save(instance);
     }
-
-    // ─── Transition Handlers ──────────────────────────────────────────────────
 
     private void handleHealthy(InstanceEntity instance) {
         if (instance.getState() != MonitorState.UP) {
@@ -62,46 +58,91 @@ public class InstanceStateService {
         }
     }
 
-    private void handleUnhealthy(InstanceEntity instance) {
+    private void handleUnhealthy(InstanceEntity instance, Map<String, Object> health) {
         instance.setSuspectCount(instance.getSuspectCount() + 1);
         int strikes = instance.getSuspectCount();
+        int maxStrikes = instance.getMaxSuspectStrikes();
+        int maxCycles = instance.getMaxQuarantineCycles();
+        long quarantineMS = instance.getQuarantineDurationMinutes() * 60 * 1000L;
 
         log.warn("Instance {} unhealthy — strike {}/{}",
-                instance.getInstanceId(), strikes, MAX_SUSPECT_STRIKES);
+                instance.getInstanceId(), strikes, maxStrikes);
 
-        if (instance.getState() == MonitorState.UP) {
-            // First failure — move to SUSPECT
+        if (instance.getState() == MonitorState.UP)
+        {
             log.warn("Instance {} → SUSPECT (strike 1)", instance.getInstanceId());
             transitionTo(instance, MonitorState.SUSPECT);
             eventPublisher.publish(instance, "Instance failing health checks — marked SUSPECT");
 
-        } else if (instance.getState() == MonitorState.SUSPECT) {
-
-            if (strikes >= MAX_SUSPECT_STRIKES) {
-
-                if (instance.getQuarantineCount() >= MAX_QUARANTINE_COUNT) {
-                    // Too many quarantine cycles — terminate monitoring
+        }
+        else if (instance.getState() == MonitorState.SUSPECT)
+        {
+            if (strikes >= maxStrikes)
+            {
+                if (instance.getQuarantineCount() >= maxCycles)
+                {
                     log.error("Instance {} exceeded max quarantine cycles → TERMINATED",
                             instance.getInstanceId());
                     transitionTo(instance, MonitorState.TERMINATED);
                     eventPublisher.publish(instance, "Instance exceeded max quarantine cycles — TERMINATED");
                 } else {
-                    // Quarantine it
                     log.error("Instance {} exceeded suspect strikes → QUARANTINED",
                             instance.getInstanceId());
                     instance.setQuarantineCount(instance.getQuarantineCount() + 1);
-                    instance.setQuarantineUntil(System.currentTimeMillis() + QUARANTINE_DURATION_MS);
+                    instance.setQuarantineUntil(System.currentTimeMillis() + quarantineMS);
                     transitionTo(instance, MonitorState.QUARANTINED);
                     eventPublisher.publish(instance,
-                            "Instance quarantined for " + (QUARANTINE_DURATION_MS / 60000) + " minutes");
+                            "Instance quarantined for " + instance.getQuarantineDurationMinutes() + "minutes");
+                    String instanceState = (String) health.getOrDefault("instanceState", "unknown");
+                    triggerAutoReboot(instance, instanceState);
                 }
             }
         }
     }
 
-    // ─── Helpers ─────────────────────────────────────────────────────────────
+    private void triggerAutoReboot(InstanceEntity instance, String instanceState)
+    {
+        Thread.ofVirtual().start(() ->
+        {
+                try {
+                    log.info("Triggering auto-reboot for instance {} (state: {})", instance.getInstanceId(), instanceState);
+                    Map<String, Object> result;
+                    if ("stopped".equals(instanceState)) {
+                        log.info("Instance {} is stopped, starting instead of rebooting", instance.getInstanceId());
+                        result = ec2HealthService.startInstance(
+                                instance.getInstanceId(),
+                                instance.getRoleArn(),
+                                instance.getExternalId(),
+                                instance.getRegion()
+                        );
+                    } else {
+                        log.info("Instance {} is running but unhealthy, rebooting", instance.getInstanceId());
+                        result = ec2HealthService.rebootInstance(
+                                instance.getInstanceId(),
+                                instance.getRoleArn(),
+                                instance.getExternalId(),
+                                instance.getRegion()
+                        );
+                    }
+                    if (Boolean.TRUE.equals(result.get("success"))) {
+                        log.info("Auto-recovery command sent for instance {} (action: {})",
+                                instance.getInstanceId(), result.get("action"));
+                        eventPublisher.publish(instance,
+                                "Auto-recovery triggered: " + result.get("action") +
+                                        " — will re-evaluate in " + instance.getQuarantineDurationMinutes() + " minutes");
+                    } else {
+                        log.error("Auto-reboot failed for instance {}: {}",
+                                instance.getInstanceId(), result.get("error"));
+                        eventPublisher.publish(instance, "Auto-reboot failed: " + result.get("error"));
+                    }
+                } catch (Exception e) {
+                    log.error("Auto-recovery exception for instance {}: {}",
+                            instance.getInstanceId(), e.getMessage());
+                }
+        });
+    }
 
-    private boolean performHealthCheck(InstanceEntity instance) {
+    private Map<String, Object> performHealthCheck(InstanceEntity instance) {
         try {
             Map<String, Object> health = ec2HealthService.getInstanceHealth(
                     instance.getInstanceId(),
@@ -115,10 +156,10 @@ public class InstanceStateService {
             } else {
                 instance.setLastError(null);
             }
-            return healthy;
+            return health;
         } catch (Exception e) {
             instance.setLastError(e.getMessage());
-            return false;
+            return Map.of("healthy", false, "instanceState", "unknown");
         }
     }
 

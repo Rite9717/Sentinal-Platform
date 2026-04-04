@@ -1,4 +1,4 @@
-package com.sentinal.registry.security;
+package com.sentinal.registry.config;
 
 
 import com.sentinal.registry.model.user.Role;

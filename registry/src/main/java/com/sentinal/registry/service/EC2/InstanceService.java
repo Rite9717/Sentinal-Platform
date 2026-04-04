@@ -39,6 +39,15 @@ public class InstanceService {
                 .suspectCount(0)
                 .quarantineCount(0)
                 .stateChangedAt(System.currentTimeMillis())
+                .quarantineDurationMinutes(
+                        request.getQuarantineDurationMinutes() != null && request.getQuarantineDurationMinutes() > 0
+                                ? request.getQuarantineDurationMinutes() : 5)
+                .maxSuspectStrikes(
+                        request.getMaxSuspectStrikes() != null && request.getMaxSuspectStrikes() > 0
+                                ? request.getMaxSuspectStrikes() : 5)
+                .maxQuarantineCycles(
+                        request.getMaxQuarantineCycles() != null && request.getMaxQuarantineCycles() > 0
+                                ? request.getMaxQuarantineCycles() : 3)
                 .user(user)
                 .build();
 
@@ -47,5 +56,17 @@ public class InstanceService {
 
     public List<InstanceEntity> getUserInstances(String username) {
         return instanceRepository.findByUserUsername(username);
+    }
+
+    public void deleteInstance(Long id, String username) {
+        InstanceEntity instance = instanceRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Instance not found"));
+
+        // Verify the instance belongs to the user
+        if (!instance.getUser().getUsername().equals(username)) {
+            throw new RuntimeException("Unauthorized to delete this instance");
+        }
+
+        instanceRepository.delete(instance);
     }
 }

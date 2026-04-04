@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import InstanceHealthCard from '../components/ec2/InstanceHealthCard';
-import { registerInstance, getUserInstances } from '../services/ec2Service';
+import InstanceRegistrationWizard from '../components/ec2/InstanceRegistrationWizard';
+import { registerInstance, getUserInstances, deleteInstance } from '../services/ec2Service';
+import { useInstanceUpdates } from '../hooks/useInstanceUpdates';
 
 /**
  * DashboardPage component
@@ -16,28 +18,36 @@ const DashboardPage = () => {
   const { user, logout } = useAuth();
   const [instances, setInstances] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showRegisterForm, setShowRegisterForm] = useState(false);
-  const [formData, setFormData] = useState({
-    instanceId: '',
-    region: 'us-east-1',
-    nickname: '',
-    roleArn: ''
-  });
+  const [showRegisterWizard, setShowRegisterWizard] = useState(false);
   const [error, setError] = useState(null);
 
   /**
    * Load user's registered instances on mount
    */
   useEffect(() => {
-    loadInstances();
+    loadInstances(true);
+    const interval = setInterval(() => {
+      loadInstances(false);
+    },15000);
+
+    return () => clearInterval(interval);
   }, []);
 
+  useInstanceUpdates(user?.id, (update) => {
+    setInstances(prev =>
+      prev.map(instance => 
+        instance.instanceId === update.instanceId
+        ? { ...instance, state: update.state}
+        : instance
+      )
+    );
+  });
   /**
    * Fetch user's registered instances
    */
-  const loadInstances = async () => {
+  const loadInstances = async (showSpinner = false) => {
     try {
-      setLoading(true);
+      if (showSpinner) setLoading(true);
       const data = await getUserInstances();
       setInstances(data);
       setError(null);
@@ -59,33 +69,28 @@ const DashboardPage = () => {
   };
 
   /**
-   * Handle form input changes
+   * Handle instance registration completion
    */
-  const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+  const handleRegistrationComplete = async (registrationData) => {    
+    try {
+      await registerInstance(registrationData);
+      setShowRegisterWizard(false);
+      await loadInstances(true);
+    } catch (err) {
+      throw new Error(err.response?.data?.message || 'Failed to register instance');
+    }
   };
 
   /**
-   * Register a new instance
+   * Handle instance deletion
    */
-  const handleRegisterInstance = async (e) => {
-    e.preventDefault();
-    setError(null);
-    
+  const handleDeleteInstance = async (instanceId) => {
     try {
-      await registerInstance(formData);
-      setFormData({
-        instanceId: '',
-        region: 'us-east-1',
-        nickname: '',
-        roleArn: ''
-      });
-      setShowRegisterForm(false);
-      await loadInstances();
+      await deleteInstance(instanceId);
+      await loadInstances(true);
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to register instance');
-      console.error(err);
+      setError(err.response?.data?.message || 'Failed to delete instance');
+      throw err;
     }
   };
 
@@ -216,10 +221,10 @@ const DashboardPage = () => {
             EC2 Instance Monitoring
           </h2>
           <button
-            onClick={() => setShowRegisterForm(!showRegisterForm)}
+            onClick={() => setShowRegisterWizard(!showRegisterWizard)}
             style={{
               padding: '10px 20px',
-              backgroundColor: '#007bff',
+              backgroundColor: showRegisterWizard ? '#6c757d' : '#007bff',
               color: '#fff',
               border: 'none',
               borderRadius: '4px',
@@ -228,7 +233,7 @@ const DashboardPage = () => {
               cursor: 'pointer'
             }}
           >
-            {showRegisterForm ? 'Cancel' : 'Register Instance'}
+            {showRegisterWizard ? 'Cancel' : 'Register Instance'}
           </button>
         </div>
 
@@ -245,115 +250,13 @@ const DashboardPage = () => {
           </div>
         )}
 
-        {showRegisterForm && (
-          <form onSubmit={handleRegisterInstance} style={{
-            marginBottom: '24px',
-            padding: '20px',
-            backgroundColor: '#f8f9fa',
-            borderRadius: '6px',
-            border: '1px solid #e9ecef'
-          }}>
-            <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'block', marginBottom: '6px', fontWeight: '500', color: '#333' }}>
-                Instance ID *
-              </label>
-              <input
-                type="text"
-                name="instanceId"
-                value={formData.instanceId}
-                onChange={handleInputChange}
-                placeholder="i-1234567890abcdef0"
-                required
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  fontSize: '14px',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px'
-                }}
-              />
-            </div>
-
-            <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'block', marginBottom: '6px', fontWeight: '500', color: '#333' }}>
-                Region *
-              </label>
-              <input
-                type="text"
-                name="region"
-                value={formData.region}
-                onChange={handleInputChange}
-                placeholder="us-east-1"
-                required
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  fontSize: '14px',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px'
-                }}
-              />
-            </div>
-
-            <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'block', marginBottom: '6px', fontWeight: '500', color: '#333' }}>
-                Nickname *
-              </label>
-              <input
-                type="text"
-                name="nickname"
-                value={formData.nickname}
-                onChange={handleInputChange}
-                placeholder="My Production Server"
-                required
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  fontSize: '14px',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px'
-                }}
-              />
-            </div>
-
-            <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'block', marginBottom: '6px', fontWeight: '500', color: '#333' }}>
-                IAM Role ARN *
-              </label>
-              <input
-                type="text"
-                name="roleArn"
-                value={formData.roleArn}
-                onChange={handleInputChange}
-                placeholder="arn:aws:iam::123456789012:role/SentinalMonitorRole"
-                required
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  fontSize: '14px',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px'
-                }}
-              />
-            </div>
-
-            <button
-              type="submit"
-              style={{
-                width: '100%',
-                padding: '12px 24px',
-                backgroundColor: '#28a745',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '4px',
-                fontSize: '16px',
-                fontWeight: '500',
-                cursor: 'pointer'
-              }}
-            >
-              Register
-            </button>
-          </form>
+        {showRegisterWizard && (
+          <div style={{ marginBottom: '24px' }}>
+            <InstanceRegistrationWizard
+              onComplete={handleRegistrationComplete}
+              onCancel={() => setShowRegisterWizard(false)}
+            />
+          </div>
         )}
 
         {loading ? (
@@ -380,7 +283,12 @@ const DashboardPage = () => {
         ) : (
           <div>
             {instances.map((instance) => (
-              <InstanceHealthCard key={instance.id} instance={instance} onUpdate={loadInstances} />
+              <InstanceHealthCard 
+                key={instance.id} 
+                instance={instance} 
+                onUpdate={loadInstances}
+                onDelete={handleDeleteInstance}
+              />
             ))}
           </div>
         )}

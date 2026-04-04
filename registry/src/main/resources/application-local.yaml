@@ -1,0 +1,56 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: registry
+  datasource:
+    url: jdbc:mysql://localhost:3306/sentinal_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    username: root
+    password: ritesh85
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: true
+
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: 918252709093-3ke5f91l6l4p1uvd924lf39co8uqbjc8.apps.googleusercontent.com
+            client-secret: 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
+            scope:
+              - email
+              - profile
+            redirect-uri: "http://localhost:8080/login/oauth2/code/google"
+        provider:
+          google:
+            authorization-uri: https://accounts.google.com/o/oauth2/v2/auth
+            token-uri: https://oauth2.googleapis.com/token
+            user-info-uri: https://www.googleapis.com/oauth2/v3/userinfo
+            user-name-attribute: sub
+
+jwt:
+  secret: 9f3c7a8e5d2b4c1f6a9e0d3b7c8f2a1e4d6c9b0e7f5a2c1d3e8b6f4a9c0d2e1f
+  expiration: 86400000
+
+app:
+  oauth2:
+    redirect-uri: ${OAUTH2_REDIRECT_URI:http://localhost:3000/oauth2/callback}
+
+logging:
+  level:
+    com.sentinal: DEBUG
+    org.springframework.security: DEBUG
+
+aws:
+  region: us-east-1
+  accessKeyId: AKIAV3VQDUIONODRCIAY
+  secretAccessKey: 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

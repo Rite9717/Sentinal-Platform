@@ -29,12 +29,14 @@ public class InstanceEntity
     @Enumerated(EnumType.STRING)
     private MonitorState state;      // UP, SUSPECT, QUARANTINED, TERMINATED
 
-    private int suspectCount;         // consecutive failures
-    private int quarantineCount;      // how many times quarantined
-
+    private int suspectCount;
+    private int quarantineCount;
+    private int quarantineDurationMinutes;
+    private int maxSuspectStrikes;
+    private int maxQuarantineCycles;
     private Long lastCheckedAt;
     private Long stateChangedAt;
-    private Long quarantineUntil;     // epoch ms — when quarantine lifts
+    private Long quarantineUntil;
 
     private String lastError;
 

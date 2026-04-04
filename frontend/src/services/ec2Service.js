@@ -37,9 +37,24 @@ export const getUserInstances = async () => {
   }
 };
 
+/**
+ * Delete a registered instance
+ * @param {number} instanceId - The instance ID to delete
+ * @returns {Promise<void>}
+ */
+export const deleteInstance = async (instanceId) => {
+  try {
+    await apiClient.delete(`/api/instances/${instanceId}`);
+  } catch (error) {
+    console.error('Error deleting instance:', error);
+    throw error;
+  }
+};
+
 const ec2Service = {
   registerInstance,
-  getUserInstances
+  getUserInstances,
+  deleteInstance
 };
 
 export default ec2Service;

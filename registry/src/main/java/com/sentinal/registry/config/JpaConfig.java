@@ -1,4 +1,4 @@
-package com.sentinal.registry.security;
+package com.sentinal.registry.config;
 
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.jpa.repository.config.EnableJpaAuditing;

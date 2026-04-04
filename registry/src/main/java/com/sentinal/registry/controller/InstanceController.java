@@ -29,4 +29,11 @@ public class InstanceController
     {
         return ResponseEntity.ok(instanceService.getUserInstances(userDetails.getUsername()));
     }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteInstance(@PathVariable Long id, @AuthenticationPrincipal UserDetails userDetails)
+    {
+        instanceService.deleteInstance(id, userDetails.getUsername());
+        return ResponseEntity.noContent().build();
+    }
 }
