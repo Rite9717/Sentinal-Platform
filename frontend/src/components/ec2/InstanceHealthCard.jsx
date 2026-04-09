@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './InstanceHealthCard.css';
+import InstanceMetricsCard from './InstanceMetricsCard';
 
 const stateColors = {
   UP: '#4caf50',
@@ -135,7 +136,7 @@ export default function InstanceHealthCard({ instance, onUpdate, onDelete }) {
           <strong>State Changed:</strong> {timeInfo.stateChanged || 'N/A'}
         </div>
       </div>
-
+      <InstanceMetricsCard instanceId={instance.id} />
       <div style={{ marginTop: '16px' }}>
         <button
           onClick={handleDelete}

@@ -1,3 +1,4 @@
+import axios from 'axios';
 import apiClient from './apiClient';
 
 /**
@@ -37,6 +38,13 @@ export const getUserInstances = async () => {
   }
 };
 
+export const getInstanceMetrics = async (instanceId) => {
+  const token  = localStorage.getItem('jwt_token');
+  const response = await axios.get(`/api/instances/${instanceId}/metrics`, {
+    headers: { Authorization: `Bearer ${token}`}
+  });
+  return response.data;
+}
 /**
  * Delete a registered instance
  * @param {number} instanceId - The instance ID to delete

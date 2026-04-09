@@ -29,6 +29,9 @@ Resources:
                 Action:
                   - ec2:DescribeInstances
                   - ec2:DescribeInstanceStatus
+                  - ec2:RebootInstances
+                  - ec2:StopInstances
+                  - ec2:StartInstances
                 Resource: "*"
 
 Outputs:
