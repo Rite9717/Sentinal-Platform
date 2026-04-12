@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import InstanceHealthCard from '../components/ec2/InstanceHealthCard';
 import InstanceRegistrationWizard from '../components/ec2/InstanceRegistrationWizard';
-import { registerInstance, getUserInstances, deleteInstance } from '../services/ec2Service';
+import { registerInstance, getUserInstances, deleteInstance, resetInstance } from '../services/ec2Service';
 import { useInstanceUpdates } from '../hooks/useInstanceUpdates';
 
 /**
@@ -90,6 +90,19 @@ const DashboardPage = () => {
       await loadInstances(true);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to delete instance');
+      throw err;
+    }
+  };
+
+  /**
+   * Handle instance reset
+   */
+  const handleResetInstance = async (instanceId) => {
+    try {
+      await resetInstance(instanceId);
+      await loadInstances(true);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to reset instance');
       throw err;
     }
   };
@@ -288,6 +301,7 @@ const DashboardPage = () => {
                 instance={instance} 
                 onUpdate={loadInstances}
                 onDelete={handleDeleteInstance}
+                onReset={handleResetInstance}
               />
             ))}
           </div>

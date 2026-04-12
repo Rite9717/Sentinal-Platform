@@ -1,12 +1,15 @@
 package com.sentinal.registry.service.metrics;
 
 
+import com.sentinal.registry.model.instances.MonitorState;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -18,7 +21,10 @@ public class PrometheusService
     @Value("${prometheus.url}")
     private String prometheusUrl;
 
-    private final RestTemplate restTemplate =  new RestTemplate();
+    private final RestTemplate restTemplate =  new RestTemplateBuilder()
+            .connectTimeout(Duration.ofSeconds(2))
+            .readTimeout(Duration.ofSeconds(5))
+            .build();
     private Map<String,Object> query(String promQL)
     {
         try {
@@ -80,10 +86,21 @@ public class PrometheusService
         return query(promQL);
     }
 
-    // Get all metrics at once
-    public Map<String, Object> getAllMetrics(String instanceId) {
+    public Map<String, Object> getAllMetrics(String instanceId, MonitorState state) {
         Map<String, Object> metrics = new HashMap<>();
-
+        if(state == null || state!= MonitorState.UP)
+        {
+            metrics.put("cpu", "0");
+            metrics.put("memory", "0");
+            metrics.put("disk", "0");
+            metrics.put("networkIn", "0");
+            metrics.put("networkOut", "0");
+            metrics.put("load", "0");
+            metrics.put("instanceId", instanceId);
+            metrics.put("status", "unavailable");
+            metrics.put("reason", "Instance is not UP (state: " + state + ")");
+            return metrics;
+        }
         try {
             double cpuUsage = Double.parseDouble(extractValue(getCpuUsage(instanceId)));
             double memory = Double.parseDouble(extractValue(getMemoryUsage(instanceId)));

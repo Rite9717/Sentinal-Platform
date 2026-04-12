@@ -59,10 +59,26 @@ export const deleteInstance = async (instanceId) => {
   }
 };
 
+/**
+ * Reset instance state to UP
+ * @param {number} instanceId - The instance ID to reset
+ * @returns {Promise<Object>}
+ */
+export const resetInstance = async (instanceId) => {
+  try {
+    const response = await apiClient.post(`/api/instances/${instanceId}/reset`);
+    return response.data;
+  } catch (error) {
+    console.error('Error resetting instance:', error);
+    throw error;
+  }
+};
+
 const ec2Service = {
   registerInstance,
   getUserInstances,
-  deleteInstance
+  deleteInstance,
+  resetInstance
 };
 
 export default ec2Service;

@@ -9,9 +9,10 @@ const stateColors = {
   TERMINATED: '#9e9e9e'
 };
 
-export default function InstanceHealthCard({ instance, onUpdate, onDelete }) {
+export default function InstanceHealthCard({ instance, onUpdate, onDelete, onReset }) {
   const [timeInfo, setTimeInfo] = useState({ lastChecked: '', stateChanged: '' });
   const [deleting, setDeleting] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     const updateTimes = () => {
@@ -58,6 +59,21 @@ export default function InstanceHealthCard({ instance, onUpdate, onDelete }) {
     } catch (error) {
       alert('Failed to delete instance: ' + (error.message || 'Unknown error'));
       setDeleting(false);
+    }
+  };
+
+  const handleReset = async () => {
+    if (!window.confirm(`Reset "${instance.nickname}" to UP state?`)) {
+      return;
+    }
+
+    setResetting(true);
+    try {
+      await onReset(instance.id);
+    } catch (error) {
+      alert('Failed to reset instance: ' + (error.message || 'Unknown error'));
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -138,6 +154,28 @@ export default function InstanceHealthCard({ instance, onUpdate, onDelete }) {
       </div>
       <InstanceMetricsCard instanceId={instance.id} />
       <div style={{ marginTop: '16px' }}>
+        <button
+          onClick={handleReset}
+          disabled={resetting || instance.state === 'UP'}
+          style={{
+            width: '100%',
+            padding: '10px',
+            backgroundColor: resetting ? '#ccc' : instance.state === 'UP' ? '#6c757d' : '#ffc107',
+            color: '#fff',
+            border: 'none',
+            borderRadius: '4px',
+            fontSize: '14px',
+            fontWeight: '500',
+            cursor: resetting || instance.state === 'UP' ? 'not-allowed' : 'pointer',
+            transition: 'background-color 0.2s',
+            marginBottom: '8px'
+          }}
+          onMouseOver={(e) => !resetting && instance.state !== 'UP' && (e.target.style.backgroundColor = '#e0a800')}
+          onMouseOut={(e) => !resetting && instance.state !== 'UP' && (e.target.style.backgroundColor = '#ffc107')}
+        >
+          {resetting ? 'Resetting...' : instance.state === 'UP' ? 'Already UP' : 'Reset to UP'}
+        </button>
+        
         <button
           onClick={handleDelete}
           disabled={deleting}

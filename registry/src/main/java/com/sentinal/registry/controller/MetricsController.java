@@ -26,7 +26,7 @@ public class MetricsController
                 .filter(instance -> instance.getUser().getUsername()
                         .equals(userDetails.getUsername()))
                 .map(instance -> ResponseEntity.ok(
-                        prometheusService.getAllMetrics(instance.getInstanceId())
+                        prometheusService.getAllMetrics(instance.getInstanceId(),instance.getState())
                 ))
                 .orElse(ResponseEntity.notFound().build());
     }
