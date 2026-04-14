@@ -1,6 +1,6 @@
 # Sentinal Platform
 
-A cloud-native platform for monitoring and self-healing AWS EC2 instances. Users can register their EC2 instances, monitor their health in real time, and let the platform automatically recover failed instances — without manual intervention.
+A cloud-native platform for monitoring and self-healing AWS EC2 instances. Users register their EC2 instances, monitor health in real time, and let the platform automatically recover failed instances — without manual intervention. When an instance cannot be recovered, Sentinal captures a full incident report, notifies the user by email, and generates an AI-ready diagnostic prompt.
 
 ---
 
@@ -17,9 +17,11 @@ UP → SUSPECT → QUARANTINED → (auto-reboot) → UP
 | State | Meaning |
 |---|---|
 | **UP** | All health checks passing |
-| **SUSPECT** | 1–2 consecutive failures detected |
-| **QUARANTINED** | 3+ failures — auto-reboot triggered, cooldown applied |
+| **SUSPECT** | Consecutive failures detected — accumulating strikes |
+| **QUARANTINED** | Max strikes reached — auto-reboot triggered, cooldown applied |
 | **TERMINATED** | Max recovery cycles exceeded — manual intervention required |
+
+When an instance first leaves UP, Sentinal opens an **incident**. Metrics are captured at every state transition. When the incident resolves (recovered or terminated), the full timeline is sealed into a single snapshot and an email alert is sent to the user.
 
 ---
 
@@ -29,13 +31,13 @@ UP → SUSPECT → QUARANTINED → (auto-reboot) → UP
 React Frontend
       ↓
 Spring Boot Backend (Registry Service)
-      ↓
-AWS STS (AssumeRole) → User's AWS Account
+      ↓                          ↓
+AWS STS (AssumeRole)       Prometheus (metrics)
       ↓
 EC2 Health APIs (DescribeInstances, DescribeInstanceStatus)
 ```
 
-The platform uses **cross-account IAM roles** — users never share AWS credentials. Instead, they create a read-only IAM role in their own AWS account that Sentinal assumes via STS. This is the same pattern used by Datadog, New Relic, and other cloud monitoring tools.
+The platform uses **cross-account IAM roles** — users never share AWS credentials. Instead, they create a minimal IAM role in their own AWS account that Sentinal assumes via STS. This is the same pattern used by Datadog, New Relic, and other cloud monitoring tools.
 
 ---
 
@@ -46,6 +48,8 @@ The platform uses **cross-account IAM roles** — users never share AWS credenti
 - Spring Security (JWT + Google OAuth2)
 - AWS SDK v2 (EC2, STS)
 - MySQL + Spring Data JPA
+- Prometheus (metrics collection via PromQL)
+- Spring Mail (incident email alerts)
 - Scheduled health checks (every 15 seconds)
 
 **Frontend**
@@ -64,6 +68,9 @@ The platform uses **cross-account IAM roles** — users never share AWS credenti
 - Manual instance controls: reboot, stop, start
 - Cross-account IAM role support via AWS STS AssumeRole
 - Secure ExternalId per user to prevent confused deputy attacks
+- **Incident snapshots** — one record per incident with metrics captured at every state transition
+- **AI-ready diagnostic prompt** — each closed incident generates a plain-English prompt you can send directly to any AI for root cause analysis
+- **Email alerts** — user is notified by email when their instance is terminated, including incident duration and auto-reboot attempts
 
 ---
 
@@ -74,6 +81,7 @@ The platform uses **cross-account IAM roles** — users never share AWS credenti
 - Java 25
 - Node.js 18+
 - MySQL 8+
+- Prometheus (with node_exporter running on monitored instances)
 - AWS account with IAM permissions
 
 ### 1. Clone the repository
@@ -102,10 +110,22 @@ spring:
             client-id: YOUR_GOOGLE_CLIENT_ID
             client-secret: YOUR_GOOGLE_CLIENT_SECRET
 
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: your-email@gmail.com
+    password: your-gmail-app-password
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: true
+
 aws:
   region: us-east-1
   accessKeyId: YOUR_AWS_ACCESS_KEY
   secretAccessKey: YOUR_AWS_SECRET_KEY
+
+prometheus:
+  url: http://localhost:9090
 
 jwt:
   secret: YOUR_JWT_SECRET
@@ -113,6 +133,8 @@ jwt:
 ```
 
 > **Never commit this file.** It is git-ignored by default.
+
+> **Gmail users:** use an App Password, not your real password. Generate one at `Google Account → Security → 2-Step Verification → App Passwords`.
 
 ### 3. Run the backend
 
@@ -139,10 +161,10 @@ Frontend runs on `http://localhost:3000`
 
 ### Step 1 — Create the IAM Role in your AWS account
 
-Sentinal provides a CloudFormation template that creates a minimal read-only IAM role in your AWS account.
+Sentinal provides a CloudFormation template that creates a minimal IAM role in your AWS account.
 
 1. Go to **AWS Console → CloudFormation → Create Stack → Upload a template file**
-2. Upload `sentinal-monitor-role.yaml` (found in the `registry/src/main/resources/` folder)
+2. Upload `sentinal-monitor-role.yaml` (found in `registry/src/main/resources/`)
 3. Enter your `ExternalId` (generated by Sentinal when you add an instance)
 4. Submit — wait for `CREATE_COMPLETE`
 5. Copy the **Role ARN** from the stack Outputs tab
@@ -165,6 +187,29 @@ Once registered, the scheduler picks it up automatically and begins health monit
 
 ---
 
+## Incident Snapshots
+
+Every time an instance leaves the UP state, Sentinal opens an incident. Metrics are fetched from Prometheus and recorded at each state transition — SUSPECT strikes, quarantine events, and the final resolution. When the incident closes (recovered or terminated), a single database record is sealed containing the full timeline.
+
+### What a closed incident looks like
+
+```
+incident_start_time : 2026-04-13 10:15:00
+incident_end_time   : 2026-04-13 10:37:45
+resolution          : TERMINATED
+metrics_timeline    : [ ...one entry per state transition... ]
+ai_context          : full plain-English prompt ready to send to any AI
+ai_analysis         : null (populated after you call an AI with the context)
+```
+
+Each entry in `metrics_timeline` contains the state, timestamp, note explaining the trigger, and CPU / memory / disk / network / load values at that moment.
+
+### Email alert on termination
+
+When an instance is terminated, the registered user receives an email containing the instance ID, region, nickname, incident duration, and number of auto-reboot attempts made.
+
+---
+
 ## API Reference
 
 ### Auth
@@ -182,9 +227,19 @@ Once registered, the scheduler picks it up automatically and begins health monit
 | POST | `/api/instances/register` | Register an EC2 instance |
 | GET | `/api/instances` | List all instances for the logged-in user |
 | GET | `/api/instances/{id}` | Get instance details and current state |
+| GET | `/api/instances/{id}/metrics` | Live metrics from Prometheus right now |
 | POST | `/api/instances/{id}/reboot` | Manually reboot an instance |
 | POST | `/api/instances/{id}/stop` | Stop an instance |
 | POST | `/api/instances/{id}/start` | Start a stopped instance |
+
+### Incidents
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/instances/{id}/incidents` | All closed incidents, newest first |
+| GET | `/api/instances/{id}/incidents/active` | Currently open incident, if any |
+| GET | `/api/instances/{id}/incidents/{incidentId}/ai-context` | AI-ready diagnostic prompt for this incident |
+| PATCH | `/api/instances/{id}/incidents/{incidentId}/ai-analysis` | Store AI response back into the incident record |
 
 ---
 
@@ -212,19 +267,27 @@ The CloudFormation template creates a role with the following minimal permission
 
 ```
 Sentinal-Platform/
-├── frontend/                  # React frontend
+├── frontend/                        # React frontend
 │   └── src/
 │       ├── components/
 │       └── services/
-└── registry/                  # Spring Boot backend
+└── registry/                        # Spring Boot backend
     └── src/main/
         ├── java/com/sentinal/registry/
-        │   ├── controller/    # REST controllers
-        │   ├── service/       # Business logic + EC2/STS clients
-        │   ├── model/         # JPA entities
-        │   ├── repository/    # Spring Data repositories
-        │   ├── security/      # JWT + OAuth2 config
-        │   └── filter/        # JWT authentication filter
+        │   ├── controller/          # REST controllers
+        │   ├── service/
+        │   │   ├── EC2/             # Health checks, state machine, instance controls
+        │   │   ├── metrics/         # Prometheus integration
+        │   │   ├── snapshot/        # Incident lifecycle and AI context generation
+        │   │   ├── notification/    # Email alerts
+        │   │   └── scheduler/       # 15-second health check scheduler
+        │   ├── model/
+        │   │   ├── instances/       # InstanceEntity, MonitorState
+        │   │   ├── snapshot/        # IncidentSnapshot, MetricsInterval
+        │   │   └── user/            # User entity
+        │   ├── repository/          # Spring Data JPA repositories
+        │   ├── security/            # JWT + OAuth2 config
+        │   └── filter/              # JWT authentication filter
         └── resources/
             ├── application.yaml
             └── sentinal-monitor-role.yaml   # CloudFormation template
@@ -243,16 +306,20 @@ Sentinal-Platform/
 | `GOOGLE_CLIENT_SECRET` | Google OAuth2 client secret |
 | `JWT_SECRET` | Secret key for signing JWT tokens |
 | `OAUTH2_REDIRECT_URI` | OAuth2 callback URL (default: `http://localhost:3000/oauth2/callback`) |
+| `PROMETHEUS_URL` | Prometheus base URL (default: `http://localhost:9090`) |
+| `MAIL_USERNAME` | Gmail address for sending alerts |
+| `MAIL_PASSWORD` | Gmail App Password (not your real password) |
 
 ---
 
 ## Security
 
-- All secrets are managed via environment variables — never hardcoded
+- All secrets managed via environment variables — never hardcoded
 - Cross-account access uses AWS STS AssumeRole with a unique `ExternalId` per user
 - JWT tokens used for all authenticated API calls
 - Google OAuth2 supported as an alternative login method
 - Spring Security filters applied to all protected routes
+- Incident data is scoped per user — users can only access their own instances and incidents
 
 ---
 
