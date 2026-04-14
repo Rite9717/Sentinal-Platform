@@ -1,263 +1,147 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import DashboardPage from './DashboardPage';
 import { useAuth } from '../contexts/AuthContext';
 import { mockNavigate } from 'react-router-dom';
 import * as ec2Service from '../services/ec2Service';
 
-// Mock the AuthContext
 jest.mock('../contexts/AuthContext');
-
-// Mock react-router-dom using the manual mock
 jest.mock('react-router-dom');
-
-// Mock ec2Service
 jest.mock('../services/ec2Service');
+jest.mock('../hooks/useInstanceUpdates', () => ({
+  useInstanceUpdates: jest.fn(),
+}));
 
 describe('DashboardPage', () => {
-  let mockLogout;
+  const mockLogout = jest.fn();
+  const mockUpdateProfile = jest.fn();
 
   beforeEach(() => {
-    mockLogout = jest.fn();
-    mockNavigate.mockClear();
-    
-    // Mock ec2Service methods
-    ec2Service.getUserInstances = jest.fn().mockResolvedValue([]);
-    ec2Service.registerInstance = jest.fn().mockResolvedValue({});
-  });
-
-  afterEach(() => {
     jest.clearAllMocks();
-  });
-
-  const renderDashboard = async (user = null) => {
     useAuth.mockReturnValue({
-      user,
-      logout: mockLogout
+      user: {
+        id: 1,
+        username: 'testuser',
+        email: 'test@example.com',
+        fullName: 'Test User',
+        role: 'USER',
+      },
+      logout: mockLogout,
+      updateProfile: mockUpdateProfile,
     });
 
-    const result = render(<DashboardPage />);
-    
-    // Wait for initial load
+    ec2Service.getUserInstances.mockResolvedValue([
+      {
+        id: 1,
+        instanceId: 'i-1234567890abcdef0',
+        nickname: 'Prod API',
+        region: 'us-east-1',
+        externalId: 'external-123',
+        state: 'UP',
+        suspectCount: 0,
+        quarantineCount: 0,
+        quarantineDurationMinutes: 5,
+        maxSuspectStrikes: 5,
+        maxQuarantineCycles: 3,
+      },
+    ]);
+    ec2Service.getInstanceMetrics.mockResolvedValue({
+      cpu: '34.2',
+      memory: '51.7',
+      disk: '20.4',
+    });
+    ec2Service.getInstanceSnapshots.mockResolvedValue([
+      {
+        Id: 10,
+        snapshotTime: '2026-04-12T10:15:00',
+        aiAnalysis: 'CPU remains healthy and no incident pattern is currently detected.',
+        cpuUsage: 34.2,
+        memoryUsage: 51.7,
+      },
+    ]);
+    ec2Service.registerInstance.mockResolvedValue({});
+    ec2Service.resetInstance.mockResolvedValue({});
+    ec2Service.deleteInstance.mockResolvedValue({});
+  });
+
+  test('renders registry-backed instances view', async () => {
+    render(<DashboardPage />);
+
     await waitFor(() => {
       expect(ec2Service.getUserInstances).toHaveBeenCalled();
     });
-    
-    return result;
-  };
 
-  describe('Rendering', () => {
-    it('should render welcome message without name when user is null', async () => {
-      await renderDashboard(null);
-      
-      expect(screen.getByText('Welcome!')).toBeInTheDocument();
-    });
-
-    it('should render welcome message with user full name when user exists', async () => {
-      const user = {
-        id: 1,
-        username: 'testuser',
-        email: 'test@example.com',
-        fullName: 'Test User',
-        role: 'USER'
-      };
-
-      await renderDashboard(user);
-      
-      expect(screen.getByText('Welcome, Test User!')).toBeInTheDocument();
-    });
-
-    it('should render user information section when user exists', async () => {
-      const user = {
-        id: 1,
-        username: 'testuser',
-        email: 'test@example.com',
-        fullName: 'Test User',
-        role: 'USER'
-      };
-
-      await renderDashboard(user);
-      
-      expect(screen.getByText('User Information')).toBeInTheDocument();
-      expect(screen.getByText('Username:')).toBeInTheDocument();
-      expect(screen.getByText('testuser')).toBeInTheDocument();
-      expect(screen.getByText('Email:')).toBeInTheDocument();
-      expect(screen.getByText('test@example.com')).toBeInTheDocument();
-      expect(screen.getByText('Role:')).toBeInTheDocument();
-      expect(screen.getByText('USER')).toBeInTheDocument();
-    });
-
-    it('should not render user information section when user is null', async () => {
-      await renderDashboard(null);
-      
-      expect(screen.queryByText('User Information')).not.toBeInTheDocument();
-    });
-
-    it('should render logout button', async () => {
-      await renderDashboard(null);
-      
-      const logoutButton = screen.getByRole('button', { name: /logout/i });
-      expect(logoutButton).toBeInTheDocument();
-    });
-
-    it('should render EC2 monitoring section', async () => {
-      await renderDashboard(null);
-      
-      expect(screen.getByText('EC2 Instance Monitoring')).toBeInTheDocument();
-      expect(screen.getByText('Register Instance')).toBeInTheDocument();
-    });
-
-    it('should show empty state when no instances', async () => {
-      await renderDashboard(null);
-      
-      expect(screen.getByText('No instances registered yet.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Instances/i })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: /Open Chat/i }).length).toBeGreaterThan(0);
     });
   });
 
-  describe('Logout Functionality', () => {
-    it('should call logout and navigate to login when logout button is clicked', async () => {
-      const user = {
-        id: 1,
-        username: 'testuser',
-        email: 'test@example.com',
-        fullName: 'Test User',
-        role: 'USER'
-      };
+  test('opens register modal', async () => {
+    render(<DashboardPage />);
 
-      await renderDashboard(user);
-      
-      const logoutButton = screen.getByRole('button', { name: /logout/i });
-      fireEvent.click(logoutButton);
-
-      expect(mockLogout).toHaveBeenCalledTimes(1);
-      expect(mockNavigate).toHaveBeenCalledWith('/login');
+    await waitFor(() => {
+      expect(ec2Service.getUserInstances).toHaveBeenCalled();
     });
 
-    it('should call logout even when user is null', async () => {
-      await renderDashboard(null);
-      
-      const logoutButton = screen.getByRole('button', { name: /logout/i });
-      fireEvent.click(logoutButton);
-
-      expect(mockLogout).toHaveBeenCalledTimes(1);
-      expect(mockNavigate).toHaveBeenCalledWith('/login');
-    });
+    fireEvent.click(screen.getByRole('button', { name: /Register Instance/i }));
+    expect(screen.getByRole('heading', { name: /Register Instance/i })).toBeInTheDocument();
   });
 
-  describe('User Data Display', () => {
-    it('should display all user fields correctly', async () => {
-      const user = {
-        id: 123,
-        username: 'johndoe',
-        email: 'john.doe@example.com',
-        fullName: 'John Doe',
-        role: 'ADMIN',
-        enabled: true,
-        createdAt: '2024-01-01T12:00:00'
-      };
+  test('switches to chat view from an instance card', async () => {
+    render(<DashboardPage />);
 
-      await renderDashboard(user);
-      
-      expect(screen.getByText('johndoe')).toBeInTheDocument();
-      expect(screen.getByText('john.doe@example.com')).toBeInTheDocument();
-      expect(screen.getByText('ADMIN')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(ec2Service.getUserInstances).toHaveBeenCalled();
     });
 
-    it('should handle user with minimal data', async () => {
-      const user = {
-        username: 'minimaluser',
-        email: 'minimal@example.com',
-        role: 'USER'
-      };
+    fireEvent.click(screen.getAllByText(/Open Chat/i)[0]);
 
-      await renderDashboard(user);
-      
-      expect(screen.getByText('minimaluser')).toBeInTheDocument();
-      expect(screen.getByText('minimal@example.com')).toBeInTheDocument();
-      expect(screen.getByText('USER')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(ec2Service.getInstanceSnapshots).toHaveBeenCalledWith(1);
     });
+
+    expect(screen.getByText(/Context Channel/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/CPU remains healthy/i).length).toBeGreaterThan(0);
   });
 
-  describe('Instance Registration', () => {
-    it('should show wizard when register button is clicked', async () => {
-      await renderDashboard(null);
-      
-      const registerButton = screen.getByText('Register Instance');
-      fireEvent.click(registerButton);
+  test('logs out and navigates to login', async () => {
+    render(<DashboardPage />);
 
-      await waitFor(() => {
-        expect(screen.getByText('Register AWS EC2 Instance')).toBeInTheDocument();
-      });
+    await waitFor(() => {
+      expect(ec2Service.getUserInstances).toHaveBeenCalled();
     });
 
-    it('should hide wizard when cancel is clicked', async () => {
-      await renderDashboard(null);
-      
-      const registerButton = screen.getByText('Register Instance');
-      fireEvent.click(registerButton);
+    fireEvent.click(screen.getByRole('button', { name: /Logout/i }));
 
-      await waitFor(() => {
-        expect(screen.getByText('Register AWS EC2 Instance')).toBeInTheDocument();
-      });
+    expect(mockLogout).toHaveBeenCalledTimes(1);
+    expect(mockNavigate).toHaveBeenCalledWith('/login');
+  });
 
-      // Click the Cancel button - there are multiple, get all and click the first one
-      const cancelButtons = screen.getAllByText('Cancel');
-      fireEvent.click(cancelButtons[0]);
-
-      await waitFor(() => {
-        expect(screen.queryByText('Register AWS EC2 Instance')).not.toBeInTheDocument();
-      });
+  test('opens profile modal and updates profile', async () => {
+    mockUpdateProfile.mockResolvedValue({
+      id: 1,
+      username: 'opslead',
+      email: 'test@example.com',
+      fullName: 'Ops Lead',
+      role: 'USER',
     });
 
-    it('should display instances when loaded', async () => {
-      const mockInstances = [
-        {
-          id: 1,
-          instanceId: 'i-1234567890abcdef0',
-          nickname: 'Test Server',
-          region: 'us-east-1',
-          status: 'running'
-        }
-      ];
+    render(<DashboardPage />);
 
-      ec2Service.getUserInstances.mockResolvedValue(mockInstances);
-
-      await renderDashboard(null);
-
-      await waitFor(() => {
-        expect(screen.queryByText('No instances registered yet.')).not.toBeInTheDocument();
-      });
+    await waitFor(() => {
+      expect(ec2Service.getUserInstances).toHaveBeenCalled();
     });
 
-    it('should delete instance when delete button is clicked', async () => {
-      const mockInstances = [
-        {
-          id: 1,
-          instanceId: 'i-1234567890abcdef0',
-          nickname: 'Test Server',
-          region: 'us-east-1',
-          state: 'UP'
-        }
-      ];
+    fireEvent.click(screen.getByRole('button', { name: /Profile/i }));
+    fireEvent.change(screen.getByDisplayValue('testuser'), { target: { value: 'opslead' } });
+    fireEvent.change(screen.getByDisplayValue('Test User'), { target: { value: 'Ops Lead' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save Profile/i }));
 
-      ec2Service.getUserInstances.mockResolvedValue(mockInstances);
-      ec2Service.deleteInstance = jest.fn().mockResolvedValue();
-      
-      // Mock window.confirm
-      global.confirm = jest.fn(() => true);
-
-      await renderDashboard(null);
-
-      await waitFor(() => {
-        expect(screen.getByText('Test Server')).toBeInTheDocument();
-      });
-
-      // Click delete button
-      const deleteButton = screen.getByText('Delete Instance');
-      fireEvent.click(deleteButton);
-
-      await waitFor(() => {
-        expect(ec2Service.deleteInstance).toHaveBeenCalledWith(1);
+    await waitFor(() => {
+      expect(mockUpdateProfile).toHaveBeenCalledWith({
+        username: 'opslead',
+        fullName: 'Ops Lead',
       });
     });
   });

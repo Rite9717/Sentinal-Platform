@@ -1,19 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import ErrorMessage from '../common/ErrorMessage';
-import './RegisterForm.css';
 
-/**
- * RegisterForm component
- * Reusable form component for user registration
- * 
- * @param {Object} props - Component props
- * @param {Function} props.onSubmit - Callback function when form is submitted (data) => Promise<void>
- * @param {Object} props.errors - Validation errors for each field { username, email, password, fullName }
- * @param {string|null} props.serverError - Server error message to display
- * @param {boolean} props.loading - Whether the form is in loading state
- * @param {Function} props.onFieldBlur - Callback when field loses focus (field, value) => void
- * @returns {React.ReactElement} Registration form
- */
 const RegisterForm = ({ onSubmit, errors, serverError, loading, onFieldBlur }) => {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -22,23 +9,19 @@ const RegisterForm = ({ onSubmit, errors, serverError, loading, onFieldBlur }) =
   const [localServerError, setLocalServerError] = useState(serverError);
   const [fieldErrors, setFieldErrors] = useState(errors || {});
 
-  // Refs for focus management
   const usernameRef = useRef(null);
   const emailRef = useRef(null);
   const passwordRef = useRef(null);
   const fullNameRef = useRef(null);
 
-  // Update local server error when prop changes
-  React.useEffect(() => {
+  useEffect(() => {
     setLocalServerError(serverError);
   }, [serverError]);
 
-  // Update field errors when prop changes
-  React.useEffect(() => {
+  useEffect(() => {
     setFieldErrors(errors || {});
   }, [errors]);
 
-  // Focus management: focus on first field with error
   useEffect(() => {
     if (fieldErrors.username && usernameRef.current) {
       usernameRef.current.focus();
@@ -51,193 +34,129 @@ const RegisterForm = ({ onSubmit, errors, serverError, loading, onFieldBlur }) =
     }
   }, [fieldErrors]);
 
-  const handleUsernameChange = (e) => {
-    setUsername(e.target.value);
-    // Clear field error when user types
-    if (fieldErrors.username) {
-      setFieldErrors({ ...fieldErrors, username: null });
-    }
-    // Clear server error when user types
-    if (localServerError) {
-      setLocalServerError(null);
-    }
-  };
-
-  const handleEmailChange = (e) => {
-    setEmail(e.target.value);
-    // Clear field error when user types
-    if (fieldErrors.email) {
-      setFieldErrors({ ...fieldErrors, email: null });
-    }
-    // Clear server error when user types
-    if (localServerError) {
-      setLocalServerError(null);
-    }
-  };
-
-  const handlePasswordChange = (e) => {
-    setPassword(e.target.value);
-    // Clear field error when user types
-    if (fieldErrors.password) {
-      setFieldErrors({ ...fieldErrors, password: null });
-    }
-    // Clear server error when user types
-    if (localServerError) {
-      setLocalServerError(null);
-    }
-  };
-
-  const handleFullNameChange = (e) => {
-    setFullName(e.target.value);
-    // Clear field error when user types
-    if (fieldErrors.fullName) {
-      setFieldErrors({ ...fieldErrors, fullName: null });
-    }
-    // Clear server error when user types
-    if (localServerError) {
-      setLocalServerError(null);
-    }
-  };
-
-  const handleUsernameBlur = () => {
-    onFieldBlur('username', username);
-  };
-
-  const handleEmailBlur = () => {
-    onFieldBlur('email', email);
-  };
-
-  const handlePasswordBlur = () => {
-    onFieldBlur('password', password);
-  };
-
-  const handleFullNameBlur = () => {
-    onFieldBlur('fullName', fullName);
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (event) => {
+    event.preventDefault();
     await onSubmit({ username, email, password, fullName });
   };
 
-  const handleDismissServerError = () => {
-    setLocalServerError(null);
-  };
-
   return (
-    <form onSubmit={handleSubmit} className="register-form" aria-label="Registration form">
-      <ErrorMessage message={localServerError} onDismiss={handleDismissServerError} />
+    <form onSubmit={handleSubmit} className="register-form space-y-5" aria-label="Registration form">
+      <ErrorMessage message={localServerError} onDismiss={() => setLocalServerError(null)} />
 
-      <div className="register-form__field">
-        <label htmlFor="username" className="register-form__label">
-          Username
-        </label>
-        <input
-          ref={usernameRef}
-          id="username"
-          type="text"
-          value={username}
-          onChange={handleUsernameChange}
-          onBlur={handleUsernameBlur}
-          disabled={loading}
-          required
-          aria-label="Username"
-          aria-describedby={fieldErrors.username ? 'username-error' : undefined}
-          aria-invalid={fieldErrors.username ? 'true' : 'false'}
-          className={`register-form__input ${fieldErrors.username ? 'register-form__input--error' : ''}`}
-        />
-        {fieldErrors.username && (
-          <div id="username-error" className="register-form__field-error" role="alert">
-            {fieldErrors.username}
-          </div>
-        )}
-      </div>
+      <RegisterField
+        refProp={usernameRef}
+        id="username"
+        label="Username"
+        value={username}
+        disabled={loading}
+        error={fieldErrors.username}
+        onChange={(event) => {
+          setUsername(event.target.value);
+          if (fieldErrors.username) setFieldErrors({ ...fieldErrors, username: null });
+          if (localServerError) setLocalServerError(null);
+        }}
+        onBlur={() => onFieldBlur('username', username)}
+      />
 
-      <div className="register-form__field">
-        <label htmlFor="email" className="register-form__label">
-          Email
-        </label>
-        <input
-          ref={emailRef}
-          id="email"
-          type="email"
-          value={email}
-          onChange={handleEmailChange}
-          onBlur={handleEmailBlur}
-          disabled={loading}
-          required
-          aria-label="Email address"
-          aria-describedby={fieldErrors.email ? 'email-error' : undefined}
-          aria-invalid={fieldErrors.email ? 'true' : 'false'}
-          className={`register-form__input ${fieldErrors.email ? 'register-form__input--error' : ''}`}
-        />
-        {fieldErrors.email && (
-          <div id="email-error" className="register-form__field-error" role="alert">
-            {fieldErrors.email}
-          </div>
-        )}
-      </div>
+      <RegisterField
+        refProp={emailRef}
+        id="email"
+        label="Email"
+        ariaLabel="Email address"
+        type="email"
+        value={email}
+        disabled={loading}
+        error={fieldErrors.email}
+        onChange={(event) => {
+          setEmail(event.target.value);
+          if (fieldErrors.email) setFieldErrors({ ...fieldErrors, email: null });
+          if (localServerError) setLocalServerError(null);
+        }}
+        onBlur={() => onFieldBlur('email', email)}
+      />
 
-      <div className="register-form__field">
-        <label htmlFor="password" className="register-form__label">
-          Password
-        </label>
-        <input
-          ref={passwordRef}
-          id="password"
-          type="password"
-          value={password}
-          onChange={handlePasswordChange}
-          onBlur={handlePasswordBlur}
-          disabled={loading}
-          required
-          aria-label="Password"
-          aria-describedby={fieldErrors.password ? 'password-error' : undefined}
-          aria-invalid={fieldErrors.password ? 'true' : 'false'}
-          className={`register-form__input ${fieldErrors.password ? 'register-form__input--error' : ''}`}
-        />
-        {fieldErrors.password && (
-          <div id="password-error" className="register-form__field-error" role="alert">
-            {fieldErrors.password}
-          </div>
-        )}
-      </div>
+      <RegisterField
+        refProp={passwordRef}
+        id="password"
+        label="Password"
+        type="password"
+        value={password}
+        disabled={loading}
+        error={fieldErrors.password}
+        onChange={(event) => {
+          setPassword(event.target.value);
+          if (fieldErrors.password) setFieldErrors({ ...fieldErrors, password: null });
+          if (localServerError) setLocalServerError(null);
+        }}
+        onBlur={() => onFieldBlur('password', password)}
+      />
 
-      <div className="register-form__field">
-        <label htmlFor="fullName" className="register-form__label">
-          Full Name
-        </label>
-        <input
-          ref={fullNameRef}
-          id="fullName"
-          type="text"
-          value={fullName}
-          onChange={handleFullNameChange}
-          onBlur={handleFullNameBlur}
-          disabled={loading}
-          required
-          aria-label="Full name"
-          aria-describedby={fieldErrors.fullName ? 'fullName-error' : undefined}
-          aria-invalid={fieldErrors.fullName ? 'true' : 'false'}
-          className={`register-form__input ${fieldErrors.fullName ? 'register-form__input--error' : ''}`}
-        />
-        {fieldErrors.fullName && (
-          <div id="fullName-error" className="register-form__field-error" role="alert">
-            {fieldErrors.fullName}
-          </div>
-        )}
-      </div>
+      <RegisterField
+        refProp={fullNameRef}
+        id="fullName"
+        label="Full Name"
+        ariaLabel="Full name"
+        value={fullName}
+        disabled={loading}
+        error={fieldErrors.fullName}
+        onChange={(event) => {
+          setFullName(event.target.value);
+          if (fieldErrors.fullName) setFieldErrors({ ...fieldErrors, fullName: null });
+          if (localServerError) setLocalServerError(null);
+        }}
+        onBlur={() => onFieldBlur('fullName', fullName)}
+      />
 
       <button
         type="submit"
         disabled={loading}
         aria-busy={loading}
-        className={`register-form__submit ${loading ? 'register-form__submit--loading' : ''}`}
+        className="register-form__submit w-full rounded-2xl border border-cyan-300/40 bg-[linear-gradient(135deg,rgba(0,212,255,0.16),rgba(123,97,255,0.18))] px-4 py-3 text-sm uppercase tracking-[0.2em] text-cyan-50 transition-all duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {loading ? 'Registering...' : 'Register'}
       </button>
     </form>
   );
 };
+
+function RegisterField({
+  refProp,
+  id,
+  label,
+  ariaLabel,
+  type = 'text',
+  value,
+  disabled,
+  error,
+  onChange,
+  onBlur,
+}) {
+  const errorId = `${id}-error`;
+
+  return (
+    <label className="block space-y-2">
+      <span className="text-xs uppercase tracking-[0.24em] text-slate-500">{label}</span>
+      <input
+        ref={refProp}
+        id={id}
+        type={type}
+        value={value}
+        onChange={onChange}
+        onBlur={onBlur}
+        disabled={disabled}
+        required
+        aria-label={ariaLabel || label}
+        aria-describedby={error ? errorId : undefined}
+        aria-invalid={error ? 'true' : 'false'}
+        className={`register-form__input w-full rounded-2xl border bg-slate-950/60 px-4 py-3 text-sm text-slate-100 outline-none transition-all duration-200 placeholder:text-slate-600 focus:bg-slate-950 ${error ? 'register-form__input--error border-rose-400/40' : 'border-slate-800 focus:border-cyan-400/40'}`}
+      />
+      {error && (
+        <div id={errorId} className="register-form__field-error text-sm text-rose-300" role="alert">
+          {error}
+        </div>
+      )}
+    </label>
+  );
+}
 
 export default RegisterForm;

@@ -1,5 +1,4 @@
 import React from 'react';
-import './OAuth2Button.css';
 
 /**
  * OAuth2Button component
@@ -18,7 +17,7 @@ const OAuth2Button = ({ disabled = false }) => {
     <button
       onClick={handleClick}
       disabled={disabled}
-      className="oauth2-button"
+      className="oauth2-button flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/55 px-4 py-3 text-sm text-slate-200 transition-all duration-200 hover:border-slate-600 hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
       aria-label="Sign in with Google"
     >
       <svg className="oauth2-button__icon" width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
@@ -29,7 +28,7 @@ const OAuth2Button = ({ disabled = false }) => {
           <path d="M9.003 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.464.891 11.426 0 9.003 0 5.485 0 2.44 2.017.96 4.958L3.967 7.29c.708-2.127 2.692-3.71 5.036-3.71z" fill="#EA4335"/>
         </g>
       </svg>
-      <span className="oauth2-button__text">Sign in with Google</span>
+      <span className="oauth2-button__text uppercase tracking-[0.16em]">Sign in with Google</span>
     </button>
   );
 };

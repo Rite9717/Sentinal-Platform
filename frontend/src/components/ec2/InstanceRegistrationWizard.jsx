@@ -1,62 +1,77 @@
-import React, { useState } from 'react';
-import './InstanceRegistrationWizard.css';
+import React, { useMemo, useState } from 'react';
 
-/**
- * Multi-step wizard for registering AWS EC2 instances
- * Guides users through the IAM role setup process
- */
+const AWS_REGIONS = [
+  'us-east-1', 'us-east-2', 'us-west-1', 'us-west-2',
+  'eu-west-1', 'eu-west-2', 'eu-central-1',
+  'ap-south-1', 'ap-southeast-1', 'ap-southeast-2', 'ap-northeast-1'
+];
+
 const InstanceRegistrationWizard = ({ onComplete, onCancel }) => {
   const [step, setStep] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [roleArn, setRoleArn] = useState('');
+  const [acknowledged, setAcknowledged] = useState(false);
   const [formData, setFormData] = useState({
+    awsAccountId: '',
     instanceId: '',
     region: 'us-east-1',
     nickname: '',
-    awsAccountId: ''
   });
-  const [roleArn, setRoleArn] = useState('');
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(false);
 
-  const AWS_REGIONS = [
-    'us-east-1', 'us-east-2', 'us-west-1', 'us-west-2',
-    'eu-west-1', 'eu-west-2', 'eu-central-1',
-    'ap-south-1', 'ap-southeast-1', 'ap-southeast-2', 'ap-northeast-1'
-  ];
+  const rolePlaceholder = useMemo(
+    () => `arn:aws:iam::${formData.awsAccountId || '123456789012'}:role/SentinalMonitorRole`,
+    [formData.awsAccountId]
+  );
 
-  const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+  const accountRootArn = useMemo(
+    () => `arn:aws:iam::${formData.awsAccountId || '123456789012'}:root`,
+    [formData.awsAccountId]
+  );
+
+  const handleInputChange = (event) => {
+    const { name, value } = event.target;
+    setFormData((current) => ({ ...current, [name]: value }));
     setError(null);
   };
 
-  const handleStep1Submit = async (e) => {
-    e.preventDefault();
+  const handleStepOne = (event) => {
+    event.preventDefault();
     setError(null);
     setStep(2);
   };
 
-  const handleStep2Submit = async (e) => {
-    e.preventDefault();
+  const handleStepTwo = (event) => {
+    event.preventDefault();
     setError(null);
+
+    if (!roleArn.trim()) {
+      setError('Paste the IAM Role ARN before continuing.');
+      return;
+    }
+
+    setStep(3);
+  };
+
+  const handleComplete = async () => {
     setLoading(true);
+    setError(null);
 
     try {
-      const registrationData = {
-        instanceId: formData.instanceId,
+      await onComplete({
+        instanceId: formData.instanceId.trim(),
         region: formData.region,
-        nickname: formData.nickname,
-        roleArn: roleArn.trim()
-      };
-
-      await onComplete(registrationData);
+        nickname: formData.nickname.trim(),
+        roleArn: roleArn.trim(),
+      });
     } catch (err) {
       setError(err.message || 'Failed to register instance');
       setLoading(false);
     }
   };
 
-  const generateCloudFormationTemplate = () => {
-    return `AWSTemplateFormatVersion: '2010-09-09'
+  const downloadCloudFormationTemplate = () => {
+    const template = `AWSTemplateFormatVersion: '2010-09-09'
 
 Parameters:
   ExternalId:
@@ -73,7 +88,7 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              AWS: arn:aws:iam::${formData.awsAccountId}:root
+              AWS: ${accountRootArn}
             Action: sts:AssumeRole
             Condition:
               StringEquals:
@@ -97,10 +112,7 @@ Outputs:
     Description: "Copy this Role ARN and paste it into Sentinal"
     Value: !GetAtt SentinalMonitorRole.Arn
 `;
-  };
 
-  const downloadCloudFormationTemplate = () => {
-    const template = generateCloudFormationTemplate();
     const blob = new Blob([template], { type: 'text/yaml' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -113,228 +125,295 @@ Outputs:
   };
 
   return (
-    <div className="wizard-container">
-      <div className="wizard-header">
-        <h3>Register AWS EC2 Instance</h3>
-        <div className="wizard-steps">
-          <div className={`step ${step >= 1 ? 'active' : ''}`}>1. Instance Details</div>
-          <div className={`step ${step >= 2 ? 'active' : ''}`}>2. Complete Registration</div>
+    <div className="space-y-6">
+      <div className="border-b border-[color:var(--border)] pb-5">
+        <h3 className="text-lg uppercase tracking-[0.18em] text-slate-50">Register AWS EC2 Instance</h3>
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          {[
+            ['1. Instance Details', step >= 1],
+            ['2. Role Or Stack Setup', step >= 2],
+            ['3. Monitoring Install Guide', step >= 3],
+          ].map(([label, active]) => (
+            <div
+              key={label}
+              className={`rounded-2xl border px-4 py-3 text-xs uppercase tracking-[0.18em] ${
+                active
+                  ? 'border-cyan-400/35 bg-cyan-400/10 text-cyan-100'
+                  : 'border-slate-800 bg-slate-950/35 text-slate-500'
+              }`}
+            >
+              {label}
+            </div>
+          ))}
         </div>
       </div>
 
       {error && (
-        <div className="error-message">
+        <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
           {error}
         </div>
       )}
 
-      {/* Step 1: Instance Details */}
       {step === 1 && (
-        <form onSubmit={handleStep1Submit} className="wizard-form">
-          <div className="form-section">
-            <h4>Enter your EC2 instance details</h4>
-            
-            <div className="form-group">
-              <label htmlFor="awsAccountId">Your AWS Account ID *</label>
-              <input
-                type="text"
-                id="awsAccountId"
-                name="awsAccountId"
-                value={formData.awsAccountId}
-                onChange={handleInputChange}
-                placeholder="123456789012"
-                pattern="\d{12}"
-                required
-                disabled={loading}
-              />
-              <small>12-digit AWS Account ID</small>
-            </div>
+        <form onSubmit={handleStepOne} className="space-y-5">
+          <div className="rounded-[24px] border border-slate-800 bg-slate-950/35 p-5">
+            <h4 className="text-sm uppercase tracking-[0.18em] text-slate-100">Enter your EC2 instance details</h4>
+            <p className="mt-3 text-sm leading-7 text-slate-500">
+              Start with ownership and location details so Sentinal can generate the right IAM guidance.
+            </p>
+          </div>
 
-            <div className="form-group">
-              <label htmlFor="instanceId">Instance ID *</label>
-              <input
-                type="text"
-                id="instanceId"
-                name="instanceId"
-                value={formData.instanceId}
-                onChange={handleInputChange}
-                placeholder="i-1234567890abcdef0"
-                pattern="i-[a-f0-9]{8,17}"
-                required
-                disabled={loading}
-              />
-              <small>Format: i-xxxxxxxxxxxxxxxxx</small>
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="region">AWS Region *</label>
+          <div className="grid gap-5 md:grid-cols-2">
+            <WizardField
+              id="awsAccountId"
+              name="awsAccountId"
+              label="Your AWS Account ID *"
+              value={formData.awsAccountId}
+              onChange={handleInputChange}
+              placeholder="123456789012"
+              pattern="\d{12}"
+              helper="12-digit AWS account ID"
+            />
+            <WizardField
+              id="instanceId"
+              name="instanceId"
+              label="Instance ID *"
+              value={formData.instanceId}
+              onChange={handleInputChange}
+              placeholder="i-1234567890abcdef0"
+              pattern="i-[a-f0-9]{8,17}"
+              helper="Format: i-xxxxxxxxxxxxxxxxx"
+            />
+            <label className="block space-y-2">
+              <span className="text-xs uppercase tracking-[0.24em] text-slate-500">AWS Region *</span>
               <select
                 id="region"
                 name="region"
                 value={formData.region}
                 onChange={handleInputChange}
-                required
-                disabled={loading}
+                className="w-full rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-sm text-slate-100 outline-none transition-all duration-200 focus:border-cyan-400/40 focus:bg-slate-950"
               >
-                {AWS_REGIONS.map(region => (
+                {AWS_REGIONS.map((region) => (
                   <option key={region} value={region}>{region}</option>
                 ))}
               </select>
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="nickname">Nickname *</label>
-              <input
-                type="text"
-                id="nickname"
-                name="nickname"
-                value={formData.nickname}
-                onChange={handleInputChange}
-                placeholder="My Production Server"
-                maxLength="100"
-                required
-                disabled={loading}
-              />
-              <small>A friendly name to identify this instance</small>
-            </div>
+            </label>
+            <WizardField
+              id="nickname"
+              name="nickname"
+              label="Nickname *"
+              value={formData.nickname}
+              onChange={handleInputChange}
+              placeholder="My Production Server"
+              helper="Friendly name shown in Sentinal"
+            />
           </div>
 
-          <div className="wizard-actions">
-            <button type="button" onClick={onCancel} className="btn-secondary" disabled={loading}>
+          <div className="flex items-center justify-between">
+            <button type="button" onClick={onCancel} className="rounded-2xl border border-slate-700/80 px-4 py-3 text-sm uppercase tracking-[0.18em] text-slate-400 transition-all duration-200 hover:border-slate-500 hover:text-slate-100">
               Cancel
             </button>
-            <button type="submit" className="btn-primary" disabled={loading}>
+            <button type="submit" className="rounded-2xl border border-cyan-300/40 bg-cyan-400/10 px-5 py-3 text-sm uppercase tracking-[0.2em] text-cyan-100 transition-all duration-200 hover:bg-cyan-400/18">
               Next: Setup IAM Role
             </button>
           </div>
         </form>
       )}
 
-      {/* Step 2: Setup IAM Role and Complete Registration */}
       {step === 2 && (
-        <div className="wizard-form">
-          <div className="form-section">
-            <h4>Setup IAM Role in AWS Console</h4>
-            
-            <div className="info-box highlight">
-              <h5>Step 1: Download CloudFormation Template</h5>
-              <button 
-                type="button" 
-                onClick={downloadCloudFormationTemplate}
-                className="btn-download"
-              >
-                📥 Download sentinal-monitor-role.yaml
-              </button>
-              <small>Template configured for AWS Account: {formData.awsAccountId}</small>
-            </div>
+        <div className="space-y-5">
+          <div className="rounded-[24px] border border-slate-800 bg-slate-950/35 p-5">
+            <h4 className="text-sm uppercase tracking-[0.18em] text-slate-100">Setup IAM Role in AWS Console</h4>
+            <p className="mt-3 text-sm leading-7 text-slate-500">
+              Use the existing role/stack flow, then paste the Role ARN so Sentinal can register this instance.
+            </p>
+          </div>
 
-            <div className="instructions">
-              <h5>Step 2: Create IAM Role in AWS Console</h5>
-              <ol>
-                <li>
-                  <strong>Go to AWS CloudFormation Console</strong>
-                  <p>Navigate to: CloudFormation → Create Stack → With new resources</p>
-                </li>
-                
-                <li>
-                  <strong>Upload Template</strong>
-                  <ul>
-                    <li>Select "Choose an existing template"</li>
-                    <li>Select "Upload a template file"</li>
-                    <li>Upload the <code>sentinal-monitor-role.yaml</code> file</li>
-                    <li>Click "Next"</li>
-                  </ul>
-                </li>
-                
-                <li>
-                  <strong>Configure Stack</strong>
-                  <ul>
-                    <li>Stack name: <code>SentinalMonitorStack</code></li>
-                    <li>ExternalId: <strong>Enter any unique identifier (e.g., your email or company name)</strong></li>
-                    <li>Click "Next" → "Next"</li>
-                  </ul>
-                </li>
-                
-                <li>
-                  <strong>Create Stack</strong>
-                  <ul>
-                    <li>Check "I acknowledge that AWS CloudFormation might create IAM resources"</li>
-                    <li>Click "Submit"</li>
-                    <li>Wait for status: <span className="status-success">CREATE_COMPLETE</span></li>
-                  </ul>
-                </li>
-                
-                <li>
-                  <strong>Get Role ARN</strong>
-                  <ul>
-                    <li>Click on <code>SentinalMonitorStack</code></li>
-                    <li>Go to "Outputs" tab</li>
-                    <li>Copy the <strong>RoleArn</strong> value</li>
-                    <li>Format: <code>arn:aws:iam::{formData.awsAccountId}:role/SentinalMonitorRole</code></li>
-                  </ul>
-                </li>
-              </ol>
-            </div>
-
-            <div className="form-section" style={{ marginTop: '32px' }}>
-              <h4>Step 3: Enter Role ARN</h4>
-              
-              <div className="info-box">
-                <p>Paste the Role ARN from your CloudFormation stack outputs.</p>
+          <div className="rounded-[24px] border border-cyan-400/20 bg-cyan-400/10 p-5">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h5 className="text-sm uppercase tracking-[0.18em] text-cyan-100">Step 1: Download CloudFormation Template</h5>
+                <p className="mt-2 text-sm leading-7 text-slate-300">Template configured for AWS Account: {formData.awsAccountId}</p>
               </div>
-
-              <form onSubmit={handleStep2Submit}>
-                <div className="form-group">
-                  <label htmlFor="roleArn">IAM Role ARN *</label>
-                  <input
-                    type="text"
-                    id="roleArn"
-                    value={roleArn}
-                    onChange={(e) => {
-                      setRoleArn(e.target.value);
-                      setError(null);
-                    }}
-                    placeholder={`arn:aws:iam::${formData.awsAccountId}:role/SentinalMonitorRole`}
-                    pattern="arn:aws:iam::\d{12}:role\/.+"
-                    required
-                    disabled={loading}
-                  />
-                  <small>Format: arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME</small>
-                </div>
-
-                <div className="info-box">
-                  <h5>What happens next?</h5>
-                  <ul>
-                    <li>✓ We'll verify the IAM role can be assumed</li>
-                    <li>✓ We'll test access to your EC2 instance</li>
-                    <li>✓ Monitoring will start automatically every 15 seconds</li>
-                  </ul>
-                </div>
-
-                <div className="wizard-actions">
-                  <button 
-                    type="button" 
-                    onClick={() => setStep(1)} 
-                    className="btn-secondary"
-                    disabled={loading}
-                  >
-                    Back
-                  </button>
-                  <button 
-                    type="submit" 
-                    className="btn-primary"
-                    disabled={loading}
-                  >
-                    {loading ? 'Registering...' : 'Complete Registration'}
-                  </button>
-                </div>
-              </form>
+              <button type="button" onClick={downloadCloudFormationTemplate} className="rounded-2xl border border-cyan-300/40 bg-[linear-gradient(135deg,rgba(0,212,255,0.12),rgba(123,97,255,0.18))] px-5 py-3 text-sm uppercase tracking-[0.18em] text-cyan-50 transition-all duration-200 hover:-translate-y-0.5">
+                Download sentinal-monitor-role.yaml
+              </button>
             </div>
+          </div>
+
+          <div className="rounded-[24px] border border-slate-800 bg-slate-950/35 p-5">
+            <h5 className="text-sm uppercase tracking-[0.18em] text-slate-100">Step 2: Create IAM Role Or Stack</h5>
+            <ol className="mt-4 space-y-4 text-sm leading-7 text-slate-400">
+              <li>Go to AWS CloudFormation and create a new stack using the downloaded `sentinal-monitor-role.yaml` template.</li>
+              <li>Stack name: `SentinalMonitorStack`.</li>
+              <li>Use a unique External ID when prompted.</li>
+              <li>Acknowledge IAM resource creation and wait for `CREATE_COMPLETE`.</li>
+              <li>Open the stack `Outputs` tab and copy the `RoleArn` value.</li>
+            </ol>
+            <div className="mt-5 rounded-2xl border border-slate-800 bg-[#020510] px-4 py-3 text-sm text-slate-300">
+              Expected role ARN format: <code>{rolePlaceholder}</code>
+            </div>
+          </div>
+
+          <form onSubmit={handleStepTwo} className="space-y-5">
+            <WizardField
+              id="roleArn"
+              name="roleArn"
+              label="IAM Role ARN *"
+              value={roleArn}
+              onChange={(event) => {
+                setRoleArn(event.target.value);
+                setError(null);
+              }}
+              placeholder={rolePlaceholder}
+              pattern="arn:aws:iam::\d{12}:role\/.+"
+              helper="Paste the Role ARN from CloudFormation outputs"
+            />
+
+            <div className="flex items-center justify-between">
+              <button type="button" onClick={() => setStep(1)} className="rounded-2xl border border-slate-700/80 px-4 py-3 text-sm uppercase tracking-[0.18em] text-slate-400 transition-all duration-200 hover:border-slate-500 hover:text-slate-100">
+                Back
+              </button>
+              <button type="submit" className="rounded-2xl border border-cyan-300/40 bg-cyan-400/10 px-5 py-3 text-sm uppercase tracking-[0.2em] text-cyan-100 transition-all duration-200 hover:bg-cyan-400/18">
+                Next: Install Monitoring
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {step === 3 && (
+        <div className="space-y-5">
+          <div className="rounded-[24px] border border-slate-800 bg-slate-950/35 p-5">
+            <h4 className="text-sm uppercase tracking-[0.18em] text-slate-100">Install Node Exporter, Prometheus, and Grafana</h4>
+            <p className="mt-3 text-sm leading-7 text-slate-500">
+              After role or stack permissions are ready, Sentinal now guides operators through the monitoring stack installation on the instance.
+            </p>
+          </div>
+
+          <InstallCard
+            title="Node Exporter"
+            copy="Expose host CPU, memory, disk, and network metrics for Prometheus collection."
+            command={`sudo useradd --no-create-home --shell /bin/false node_exporter
+wget https://github.com/prometheus/node_exporter/releases/latest/download/node_exporter-*.linux-amd64.tar.gz
+tar -xvf node_exporter-*.linux-amd64.tar.gz
+sudo cp node_exporter-*.linux-amd64/node_exporter /usr/local/bin/
+sudo tee /etc/systemd/system/node_exporter.service > /dev/null <<'EOF'
+[Unit]
+Description=Node Exporter
+After=network.target
+
+[Service]
+User=node_exporter
+Group=node_exporter
+Type=simple
+ExecStart=/usr/local/bin/node_exporter
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload
+sudo systemctl enable --now node_exporter`}
+          />
+
+          <InstallCard
+            title="Prometheus"
+            copy="Scrape Node Exporter from the instance and retain time-series metrics for Sentinal and Grafana."
+            command={`wget https://github.com/prometheus/prometheus/releases/latest/download/prometheus-*.linux-amd64.tar.gz
+tar -xvf prometheus-*.linux-amd64.tar.gz
+cd prometheus-*.linux-amd64
+cat <<'EOF' > prometheus.yml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'node'
+    static_configs:
+      - targets: ['localhost:9100']
+EOF
+./prometheus --config.file=prometheus.yml`}
+          />
+
+          <InstallCard
+            title="Grafana"
+            copy="Visualize Prometheus metrics through dashboards and embedded panels back in Sentinal."
+            command={`sudo apt-get update
+sudo apt-get install -y apt-transport-https software-properties-common wget
+wget -q -O - https://packages.grafana.com/gpg.key | sudo apt-key add -
+echo "deb https://packages.grafana.com/oss/deb stable main" | sudo tee /etc/apt/sources.list.d/grafana.list
+sudo apt-get update
+sudo apt-get install -y grafana
+sudo systemctl enable --now grafana-server`}
+          />
+
+          <div className="rounded-[24px] border border-slate-800 bg-slate-950/35 p-5">
+            <h5 className="text-sm uppercase tracking-[0.18em] text-slate-100">Final Checks</h5>
+            <ul className="mt-4 space-y-3 text-sm leading-7 text-slate-400">
+              <li>Confirm Prometheus can scrape `localhost:9100` on the instance.</li>
+              <li>Confirm Grafana is reachable and dashboard variables are configured for `var-instance`.</li>
+              <li>Use the registered role ARN below when Sentinal polls and displays embedded Grafana panels.</li>
+            </ul>
+            <label className="mt-5 flex items-start gap-3 rounded-2xl border border-slate-800 bg-[#020510] px-4 py-4">
+              <input
+                type="checkbox"
+                checked={acknowledged}
+                onChange={(event) => setAcknowledged(event.target.checked)}
+                className="mt-1 h-4 w-4 accent-cyan-400"
+              />
+              <span className="text-sm leading-7 text-slate-300">
+                I understand the monitoring installation steps and want to complete instance registration now.
+              </span>
+            </label>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <button type="button" onClick={() => setStep(2)} className="rounded-2xl border border-slate-700/80 px-4 py-3 text-sm uppercase tracking-[0.18em] text-slate-400 transition-all duration-200 hover:border-slate-500 hover:text-slate-100">
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={handleComplete}
+              disabled={!acknowledged || loading}
+              className="rounded-2xl border border-cyan-300/40 bg-[linear-gradient(135deg,rgba(0,212,255,0.16),rgba(123,97,255,0.18))] px-5 py-3 text-sm uppercase tracking-[0.2em] text-cyan-50 transition-all duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {loading ? 'Registering...' : 'Complete Registration'}
+            </button>
           </div>
         </div>
       )}
     </div>
   );
 };
+
+function WizardField({ id, name, label, value, onChange, placeholder, pattern, helper }) {
+  return (
+    <label className="block space-y-2">
+      <span className="text-xs uppercase tracking-[0.24em] text-slate-500">{label}</span>
+      <input
+        id={id}
+        name={name}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        pattern={pattern}
+        required
+        className="w-full rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-sm text-slate-100 outline-none transition-all duration-200 placeholder:text-slate-600 focus:border-cyan-400/40 focus:bg-slate-950"
+      />
+      {helper && <small className="text-xs text-slate-600">{helper}</small>}
+    </label>
+  );
+}
+
+function InstallCard({ title, copy, command }) {
+  return (
+    <div className="rounded-[24px] border border-slate-800 bg-slate-950/35 p-5">
+      <h5 className="text-sm uppercase tracking-[0.18em] text-slate-100">{title}</h5>
+      <p className="mt-3 text-sm leading-7 text-slate-400">{copy}</p>
+      <pre className="mt-4 overflow-x-auto rounded-2xl border border-slate-800 bg-[#020510] p-4 text-xs leading-6 text-cyan-100">
+        <code>{command}</code>
+      </pre>
+    </div>
+  );
+}
 
 export default InstanceRegistrationWizard;

@@ -33,14 +33,19 @@ export const AuthProvider = ({ children }) => {
    * Checks localStorage for existing token
    */
   useEffect(() => {
-    const initializeAuth = () => {
+    const initializeAuth = async () => {
       const token = authService.getStoredToken();
       
       if (token) {
-        // Token exists, set authenticated state
-        setIsAuthenticated(true);
-        // Note: User data will be set after successful login/OAuth2 callback
-        // or could be decoded from JWT token if needed
+        try {
+          const userData = await authService.getCurrentUser();
+          setIsAuthenticated(true);
+          setUser(userData);
+        } catch (error) {
+          authService.clearToken();
+          setIsAuthenticated(false);
+          setUser(null);
+        }
       }
       
       setLoading(false);
@@ -57,7 +62,7 @@ export const AuthProvider = ({ children }) => {
    */
   const login = async (username, password) => {
     try {
-      const { token, user: userData } = await authService.login({ username, password });
+      const { user: userData } = await authService.login({ username, password });
       
       // Update authentication state
       setIsAuthenticated(true);
@@ -96,13 +101,20 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
   };
 
+  const updateProfile = async (profileData) => {
+    const updatedUser = await authService.updateProfile(profileData);
+    setUser(updatedUser);
+    return updatedUser;
+  };
+
   const value = {
     isAuthenticated,
     user,
     loading,
     login,
     logout,
-    handleOAuth2Callback
+    handleOAuth2Callback,
+    updateProfile
   };
 
   return (

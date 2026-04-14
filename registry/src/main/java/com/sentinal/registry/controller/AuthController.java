@@ -3,8 +3,11 @@ package com.sentinal.registry.controller;
 import com.sentinal.registry.dto.auth.LoginRequestDto;
 import com.sentinal.registry.dto.auth.LoginResponseDto;
 import com.sentinal.registry.dto.auth.RegistrationRequestDto;
+import com.sentinal.registry.dto.auth.UpdateProfileRequestDto;
 import com.sentinal.registry.dto.auth.UserResponseDto;
 import com.sentinal.registry.service.auth.AuthService;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -30,6 +33,18 @@ public class AuthController
             @Valid @RequestBody LoginRequestDto request) {
         LoginResponseDto response = authService.login(request);
         return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/me")
+    public ResponseEntity<UserResponseDto> me(@AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(authService.getCurrentUser(userDetails.getUsername()));
+    }
+
+    @PutMapping("/profile")
+    public ResponseEntity<UserResponseDto> updateProfile(
+            @Valid @RequestBody UpdateProfileRequestDto request,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(authService.updateProfile(userDetails.getUsername(), request));
     }
 
     @GetMapping("/oauth2/info")

@@ -5,5 +5,6 @@ public enum MonitorState {
     UP,
     SUSPECT,
     QUARANTINED,
-    TERMINATED
+    TERMINATED,
+    RECOVERED
 }

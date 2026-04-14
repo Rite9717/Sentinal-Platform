@@ -39,12 +39,22 @@ export const getUserInstances = async () => {
 };
 
 export const getInstanceMetrics = async (instanceId) => {
-  const token  = localStorage.getItem('jwt_token');
-  const response = await axios.get(`/api/instances/${instanceId}/metrics`, {
-    headers: { Authorization: `Bearer ${token}`}
+  const token = localStorage.getItem('jwt_token');
+  const response = await axios.get(`http://localhost:8080/api/instances/${instanceId}/metrics`, {
+    headers: { Authorization: `Bearer ${token}` }
   });
   return response.data;
-}
+};
+
+export const getInstanceSnapshots = async (instanceId) => {
+  try {
+    const response = await apiClient.get(`/api/instances/${instanceId}/snapshots`);
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching instance snapshots:', error);
+    throw error;
+  }
+};
 /**
  * Delete a registered instance
  * @param {number} instanceId - The instance ID to delete
@@ -77,6 +87,8 @@ export const resetInstance = async (instanceId) => {
 const ec2Service = {
   registerInstance,
   getUserInstances,
+  getInstanceMetrics,
+  getInstanceSnapshots,
   deleteInstance,
   resetInstance
 };

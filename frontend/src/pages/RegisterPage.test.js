@@ -18,6 +18,13 @@ describe('RegisterPage', () => {
     
     // Mock authService methods
     authService.getStoredToken = jest.fn().mockReturnValue(null);
+    authService.getCurrentUser = jest.fn().mockResolvedValue({
+      id: 1,
+      username: 'existing',
+      email: 'existing@example.com',
+      fullName: 'Existing User',
+      role: 'USER'
+    });
     authService.register = jest.fn();
     authService.login = jest.fn();
     authService.logout = jest.fn();
@@ -195,8 +202,10 @@ describe('RegisterPage', () => {
     authService.getStoredToken.mockReturnValue('mock-token');
     
     renderRegisterPage();
-    
-    expect(mockNavigate).toHaveBeenCalledWith('/dashboard', { replace: true });
+
+    return waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith('/dashboard', { replace: true });
+    });
   });
 
   test('clears validation errors when user types', async () => {

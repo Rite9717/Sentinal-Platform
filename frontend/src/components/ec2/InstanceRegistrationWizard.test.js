@@ -177,11 +177,16 @@ describe('InstanceRegistrationWizard', () => {
       expect(screen.getByText('Setup IAM Role in AWS Console')).toBeInTheDocument();
     });
 
-    // Enter role ARN
+    // Enter role ARN and move to install step
     const roleArnInput = screen.getByLabelText(/IAM Role ARN/i);
     fireEvent.change(roleArnInput, { target: { value: mockRoleArn } });
+    fireEvent.click(screen.getByText('Next: Install Monitoring'));
 
-    // Submit
+    await waitFor(() => {
+      expect(screen.getByText(/Install Node Exporter, Prometheus, and Grafana/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByLabelText(/I understand the monitoring installation steps/i));
     const submitButton = screen.getByRole('button', { name: 'Complete Registration' });
     fireEvent.click(submitButton);
 
@@ -222,11 +227,18 @@ describe('InstanceRegistrationWizard', () => {
       expect(screen.getByText('Setup IAM Role in AWS Console')).toBeInTheDocument();
     });
 
-    // Enter role ARN and submit
+    // Enter role ARN and move to final step
     const roleArnInput = screen.getByLabelText(/IAM Role ARN/i);
     fireEvent.change(roleArnInput, { 
       target: { value: 'arn:aws:iam::123456789012:role/SentinalMonitorRole' } 
     });
+    fireEvent.click(screen.getByText('Next: Install Monitoring'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Install Node Exporter, Prometheus, and Grafana/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByLabelText(/I understand the monitoring installation steps/i));
 
     const submitButton = screen.getByRole('button', { name: 'Complete Registration' });
     fireEvent.click(submitButton);

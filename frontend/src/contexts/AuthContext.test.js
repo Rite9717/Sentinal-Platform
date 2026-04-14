@@ -12,6 +12,13 @@ describe('AuthContext', () => {
     jest.clearAllMocks();
     // Clear localStorage
     localStorage.clear();
+    authService.getCurrentUser.mockResolvedValue({
+      id: 1,
+      username: 'testuser',
+      email: 'test@example.com',
+      fullName: 'Test User',
+      role: 'USER'
+    });
   });
 
   describe('useAuth hook', () => {
@@ -39,6 +46,7 @@ describe('AuthContext', () => {
       expect(result.current).toHaveProperty('login');
       expect(result.current).toHaveProperty('logout');
       expect(result.current).toHaveProperty('handleOAuth2Callback');
+      expect(result.current).toHaveProperty('updateProfile');
     });
   });
 
@@ -71,6 +79,7 @@ describe('AuthContext', () => {
 
       expect(result.current.isAuthenticated).toBe(true);
       expect(authService.getStoredToken).toHaveBeenCalled();
+      expect(authService.getCurrentUser).toHaveBeenCalled();
     });
 
     it('sets loading to false after initialization', async () => {

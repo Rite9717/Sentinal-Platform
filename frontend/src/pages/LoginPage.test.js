@@ -18,6 +18,7 @@ describe('LoginPage', () => {
     
     // Mock authService methods
     authService.getStoredToken = jest.fn().mockReturnValue(null);
+    authService.getCurrentUser = jest.fn();
     authService.login = jest.fn();
     authService.logout = jest.fn();
     authService.storeToken = jest.fn();

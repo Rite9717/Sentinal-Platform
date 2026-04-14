@@ -23,9 +23,9 @@ describe('RegisterForm', () => {
     );
     
     expect(screen.getByLabelText('Username')).toBeInTheDocument();
-    expect(screen.getByLabelText('Email')).toBeInTheDocument();
+    expect(screen.getByLabelText('Email address')).toBeInTheDocument();
     expect(screen.getByLabelText('Password')).toBeInTheDocument();
-    expect(screen.getByLabelText('Full Name')).toBeInTheDocument();
+    expect(screen.getByLabelText('Full name')).toBeInTheDocument();
   });
 
   test('renders submit button', () => {
@@ -109,9 +109,9 @@ describe('RegisterForm', () => {
     );
     
     expect(screen.getByLabelText('Username')).toBeDisabled();
-    expect(screen.getByLabelText('Email')).toBeDisabled();
+    expect(screen.getByLabelText('Email address')).toBeDisabled();
     expect(screen.getByLabelText('Password')).toBeDisabled();
-    expect(screen.getByLabelText('Full Name')).toBeDisabled();
+    expect(screen.getByLabelText('Full name')).toBeDisabled();
   });
 
   test('calls onFieldBlur when username field loses focus', () => {
@@ -143,7 +143,7 @@ describe('RegisterForm', () => {
       />
     );
     
-    const emailInput = screen.getByLabelText('Email');
+    const emailInput = screen.getByLabelText('Email address');
     fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
     fireEvent.blur(emailInput);
     
@@ -179,7 +179,7 @@ describe('RegisterForm', () => {
       />
     );
     
-    const fullNameInput = screen.getByLabelText('Full Name');
+    const fullNameInput = screen.getByLabelText('Full name');
     fireEvent.change(fullNameInput, { target: { value: 'John Doe' } });
     fireEvent.blur(fullNameInput);
     
@@ -198,9 +198,9 @@ describe('RegisterForm', () => {
     );
     
     const usernameInput = screen.getByLabelText('Username');
-    const emailInput = screen.getByLabelText('Email');
+    const emailInput = screen.getByLabelText('Email address');
     const passwordInput = screen.getByLabelText('Password');
-    const fullNameInput = screen.getByLabelText('Full Name');
+    const fullNameInput = screen.getByLabelText('Full name');
     const submitButton = screen.getByRole('button', { name: /register/i });
 
     fireEvent.change(usernameInput, { target: { value: 'testuser' } });
@@ -255,7 +255,7 @@ describe('RegisterForm', () => {
     
     expect(screen.getByText('Invalid email format')).toBeInTheDocument();
     
-    const emailInput = screen.getByLabelText('Email');
+    const emailInput = screen.getByLabelText('Email address');
     fireEvent.change(emailInput, { target: { value: 'a' } });
     
     expect(screen.queryByText('Invalid email format')).not.toBeInTheDocument();
@@ -297,7 +297,7 @@ describe('RegisterForm', () => {
     
     expect(screen.getByText('Full name is required')).toBeInTheDocument();
     
-    const fullNameInput = screen.getByLabelText('Full Name');
+    const fullNameInput = screen.getByLabelText('Full name');
     fireEvent.change(fullNameInput, { target: { value: 'a' } });
     
     expect(screen.queryByText('Full name is required')).not.toBeInTheDocument();
@@ -436,9 +436,9 @@ describe('RegisterForm', () => {
     );
     
     expect(screen.getByLabelText('Username')).toBeRequired();
-    expect(screen.getByLabelText('Email')).toBeRequired();
+    expect(screen.getByLabelText('Email address')).toBeRequired();
     expect(screen.getByLabelText('Password')).toBeRequired();
-    expect(screen.getByLabelText('Full Name')).toBeRequired();
+    expect(screen.getByLabelText('Full name')).toBeRequired();
   });
 
   test('applies error styling to fields with errors', () => {
@@ -458,7 +458,7 @@ describe('RegisterForm', () => {
     );
     
     const usernameInput = screen.getByLabelText('Username');
-    const emailInput = screen.getByLabelText('Email');
+    const emailInput = screen.getByLabelText('Email address');
     const passwordInput = screen.getByLabelText('Password');
     
     expect(usernameInput).toHaveClass('register-form__input--error');
@@ -494,9 +494,9 @@ describe('RegisterForm', () => {
     );
     
     const usernameInput = screen.getByLabelText('Username');
-    const emailInput = screen.getByLabelText('Email');
+    const emailInput = screen.getByLabelText('Email address');
     const passwordInput = screen.getByLabelText('Password');
-    const fullNameInput = screen.getByLabelText('Full Name');
+    const fullNameInput = screen.getByLabelText('Full name');
     
     expect(usernameInput).toHaveAttribute('aria-label', 'Username');
     expect(emailInput).toHaveAttribute('aria-label', 'Email address');
@@ -521,9 +521,9 @@ describe('RegisterForm', () => {
     );
     
     const usernameInput = screen.getByLabelText('Username');
-    const emailInput = screen.getByLabelText('Email');
+    const emailInput = screen.getByLabelText('Email address');
     const passwordInput = screen.getByLabelText('Password');
-    const fullNameInput = screen.getByLabelText('Full Name');
+    const fullNameInput = screen.getByLabelText('Full name');
     
     expect(usernameInput).toHaveAttribute('aria-invalid', 'true');
     expect(emailInput).toHaveAttribute('aria-invalid', 'true');
@@ -549,7 +549,7 @@ describe('RegisterForm', () => {
     
     const usernameInput = screen.getByLabelText('Username');
     const passwordInput = screen.getByLabelText('Password');
-    const emailInput = screen.getByLabelText('Email');
+    const emailInput = screen.getByLabelText('Email address');
     
     expect(usernameInput).toHaveAttribute('aria-describedby', 'username-error');
     expect(passwordInput).toHaveAttribute('aria-describedby', 'password-error');

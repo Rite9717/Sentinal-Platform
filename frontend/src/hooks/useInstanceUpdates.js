@@ -26,5 +26,5 @@ export const useInstanceUpdates = (userId, onUpdate) => {
 
         client.activate();
         return () => client.deactivate();
-    }, [userId]);
+    }, [userId, onUpdate]);
 };

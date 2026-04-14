@@ -46,6 +46,24 @@ const login = async (credentials) => {
   }
 };
 
+const getCurrentUser = async () => {
+  try {
+    const response = await apiClient.get('/api/auth/me');
+    return response.data;
+  } catch (error) {
+    throw transformError(error);
+  }
+};
+
+const updateProfile = async (profileData) => {
+  try {
+    const response = await apiClient.put('/api/auth/profile', profileData);
+    return response.data;
+  } catch (error) {
+    throw transformError(error);
+  }
+};
+
 /**
  * Logout the current user
  * Clears the JWT token from localStorage
@@ -127,6 +145,8 @@ const transformError = (error) => {
 const authService = {
   register,
   login,
+  getCurrentUser,
+  updateProfile,
   logout,
   getStoredToken,
   storeToken,

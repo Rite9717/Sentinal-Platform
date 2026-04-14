@@ -113,6 +113,51 @@ describe('authService', () => {
     });
   });
 
+  describe('getCurrentUser', () => {
+    it('should fetch current user profile', async () => {
+      const mockResponse = {
+        data: {
+          id: 1,
+          username: 'testuser',
+          email: 'test@example.com',
+          fullName: 'Test User'
+        }
+      };
+
+      apiClient.get.mockResolvedValue(mockResponse);
+
+      const result = await authService.getCurrentUser();
+
+      expect(apiClient.get).toHaveBeenCalledWith('/api/auth/me');
+      expect(result).toEqual(mockResponse.data);
+    });
+  });
+
+  describe('updateProfile', () => {
+    it('should update user profile except email', async () => {
+      const profileData = {
+        username: 'opslead',
+        fullName: 'Ops Lead'
+      };
+
+      const mockResponse = {
+        data: {
+          id: 1,
+          username: 'opslead',
+          email: 'test@example.com',
+          fullName: 'Ops Lead'
+        }
+      };
+
+      apiClient.put.mockResolvedValue(mockResponse);
+
+      const result = await authService.updateProfile(profileData);
+
+      expect(apiClient.put).toHaveBeenCalledWith('/api/auth/profile', profileData);
+      expect(result).toEqual(mockResponse.data);
+    });
+  });
+
   describe('logout', () => {
     it('should remove token from localStorage', () => {
       localStorage.setItem('jwt_token', 'mock-token');

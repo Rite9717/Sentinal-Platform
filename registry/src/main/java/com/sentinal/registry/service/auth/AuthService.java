@@ -4,6 +4,7 @@ package com.sentinal.registry.service.auth;
 import com.sentinal.registry.dto.auth.LoginRequestDto;
 import com.sentinal.registry.dto.auth.LoginResponseDto;
 import com.sentinal.registry.dto.auth.RegistrationRequestDto;
+import com.sentinal.registry.dto.auth.UpdateProfileRequestDto;
 import com.sentinal.registry.dto.auth.UserResponseDto;
 import com.sentinal.registry.exception.UserAlreadyExistsException;
 import com.sentinal.registry.model.user.Role;
@@ -14,6 +15,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -83,5 +85,26 @@ public class AuthService
                 .createdAt(user.getCreatedAt())
                 .build();
     }
-}
 
+    public UserResponseDto getCurrentUser(String username) {
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+        return toResponseDto(user);
+    }
+
+    public UserResponseDto updateProfile(String currentUsername, UpdateProfileRequestDto request) {
+        User user = userRepository.findByUsername(currentUsername)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+
+        String nextUsername = request.getUsername().trim();
+        if (!user.getUsername().equals(nextUsername) && userRepository.existsByUsername(nextUsername)) {
+            throw new UserAlreadyExistsException("Username '" + nextUsername + "' is already taken");
+        }
+
+        user.setUsername(nextUsername);
+        user.setFullName(request.getFullName().trim());
+
+        User saved = userRepository.save(user);
+        return toResponseDto(saved);
+    }
+}

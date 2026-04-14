@@ -1,91 +1,49 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { render, screen } from '@testing-library/react';
 import App from './App';
-import * as AuthContext from './contexts/AuthContext';
 
-// Mock the AuthContext
 jest.mock('./contexts/AuthContext', () => ({
-  ...jest.requireActual('./contexts/AuthContext'),
+  AuthProvider: ({ children }) => <>{children}</>,
   useAuth: jest.fn(),
-  AuthProvider: ({ children }) => <div>{children}</div>
 }));
 
-// Mock the page components
-jest.mock('./pages/LoginPage', () => {
-  return function LoginPage() {
-    return <div>Login Page</div>;
-  };
-});
+jest.mock('./components/common/ProtectedRoute', () => ({ children }) => <>{children}</>);
+jest.mock('./components/common/PublicRoute', () => ({ children }) => <>{children}</>);
+jest.mock('./pages/LandingPage', () => () => <div>Landing Page</div>);
+jest.mock('./pages/LoginPage', () => () => <div>Login Page</div>);
+jest.mock('./pages/RegisterPage', () => () => <div>Register Page</div>);
+jest.mock('./pages/DashboardPage', () => () => <div>Dashboard Page</div>);
+jest.mock('./pages/OAuth2CallbackPage', () => () => <div>OAuth2 Callback Page</div>);
 
-jest.mock('./pages/RegisterPage', () => {
-  return function RegisterPage() {
-    return <div>Register Page</div>;
-  };
-});
+describe('App', () => {
+  test('renders landing route', () => {
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <App />
+      </MemoryRouter>
+    );
 
-jest.mock('./pages/DashboardPage', () => {
-  return function DashboardPage() {
-    return <div>Dashboard Page</div>;
-  };
-});
-
-jest.mock('./pages/OAuth2CallbackPage', () => {
-  return function OAuth2CallbackPage() {
-    return <div>OAuth2 Callback Page</div>;
-  };
-});
-
-describe('App Component', () => {
-  beforeEach(() => {
-    // Reset mocks before each test
-    jest.clearAllMocks();
+    expect(screen.getByText('Landing Page')).toBeInTheDocument();
   });
 
-  test('renders without crashing', () => {
-    AuthContext.useAuth.mockReturnValue({
-      isAuthenticated: false,
-      loading: false,
-      user: null
-    });
+  test('renders login route', () => {
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <App />
+      </MemoryRouter>
+    );
 
-    render(<App />);
-    expect(screen.getByText(/Login Page/i)).toBeInTheDocument();
+    expect(screen.getByText('Login Page')).toBeInTheDocument();
   });
 
-  test('redirects root path to dashboard', async () => {
-    AuthContext.useAuth.mockReturnValue({
-      isAuthenticated: true,
-      loading: false,
-      user: { username: 'testuser' }
-    });
+  test('renders dashboard route', () => {
+    render(
+      <MemoryRouter initialEntries={['/dashboard']}>
+        <App />
+      </MemoryRouter>
+    );
 
-    render(<App />);
-    
-    await waitFor(() => {
-      expect(screen.getByText(/Dashboard Page/i)).toBeInTheDocument();
-    });
-  });
-
-  test('wraps application with AuthProvider', () => {
-    AuthContext.useAuth.mockReturnValue({
-      isAuthenticated: false,
-      loading: false,
-      user: null
-    });
-
-    const { container } = render(<App />);
-    expect(container).toBeTruthy();
-  });
-
-  test('configures Router with all routes', () => {
-    AuthContext.useAuth.mockReturnValue({
-      isAuthenticated: false,
-      loading: false,
-      user: null
-    });
-
-    render(<App />);
-    // If the app renders without errors, routing is configured correctly
-    expect(screen.getByText(/Login Page/i)).toBeInTheDocument();
+    expect(screen.getByText('Dashboard Page')).toBeInTheDocument();
   });
 });
