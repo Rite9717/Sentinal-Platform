@@ -29,6 +29,7 @@ public class IncidentSnapshot
     private LocalDateTime incidentStartTime;
     private LocalDateTime incidentEndTime;
 
+    @Enumerated(EnumType.STRING)
     private MonitorState resolution;
 
     @Column(columnDefinition = "TEXT")

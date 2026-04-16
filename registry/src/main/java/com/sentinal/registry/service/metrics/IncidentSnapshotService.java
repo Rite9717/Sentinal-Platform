@@ -23,13 +23,12 @@ import java.util.Map;
 public class IncidentSnapshotService {
 
     private final IncidentSnapshotRepository snapshotRepository;
-    private final PrometheusService prometheusService;
     private final ObjectMapper objectMapper;
     private final MailService mailService;
 
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-    public void onIncidentStart(InstanceEntity instance, String note) {
+    public void onIncidentStart(InstanceEntity instance, String note, Map<String, Object> metrics) {
         String instanceId = instance.getInstanceId();
 
         // Guard: if an open incident already exists (shouldn't happen, but be safe)
@@ -37,11 +36,21 @@ public class IncidentSnapshotService {
                 .findByInstanceEntity_InstanceIdAndIncidentEndTimeIsNull(instanceId)
                 .isPresent()) {
             log.warn("Incident already open for {}, skipping open", instanceId);
-            appendInterval(instance, MonitorState.SUSPECT, note);
+            appendInterval(instance, MonitorState.SUSPECT, note, metrics);
             return;
         }
 
-        MetricsInterval first = fetchInterval(instance, MonitorState.SUSPECT, note);
+        MetricsInterval first = MetricsInterval.builder()
+                .state(MonitorState.SUSPECT)
+                .capturedAt(LocalDateTime.now())
+                .cpuUsage(parseDouble(metrics.get("cpu")))
+                .memoryUsage(parseDouble(metrics.get("memory")))
+                .diskUsage(parseDouble(metrics.get("disk")))
+                .networkIn(parseDouble(metrics.get("networkIn")))
+                .networkOut(parseDouble(metrics.get("networkOut")))
+                .systemLoad(parseDouble(metrics.get("load")))
+                .note(note)
+                .build();
 
         IncidentSnapshot incident = IncidentSnapshot.builder()
                 .instanceEntity(instance)
@@ -57,12 +66,22 @@ public class IncidentSnapshotService {
         log.info("[INCIDENT OPEN] instance={} note={}", instanceId, note);
     }
 
-    public void appendInterval(InstanceEntity instance, MonitorState state, String note) {
+    public void appendInterval(InstanceEntity instance, MonitorState state, String note, Map<String, Object> metrics) {
         snapshotRepository
                 .findByInstanceEntity_InstanceIdAndIncidentEndTimeIsNull(instance.getInstanceId())
                 .ifPresentOrElse(
                         incident -> {
-                            MetricsInterval interval = fetchInterval(instance, state, note);
+                            MetricsInterval interval = MetricsInterval.builder()
+                                    .state(state)
+                                    .capturedAt(LocalDateTime.now())
+                                    .cpuUsage(parseDouble(metrics.get("cpu")))
+                                    .memoryUsage(parseDouble(metrics.get("memory")))
+                                    .diskUsage(parseDouble(metrics.get("disk")))
+                                    .networkIn(parseDouble(metrics.get("networkIn")))
+                                    .networkOut(parseDouble(metrics.get("networkOut")))
+                                    .systemLoad(parseDouble(metrics.get("load")))
+                                    .note(note)
+                                    .build();
                             List<MetricsInterval> timeline = parseTimeline(incident.getMetricsTimeline());
                             timeline.add(interval);
                             incident.setMetricsTimeline(toJson(timeline));
@@ -74,13 +93,23 @@ public class IncidentSnapshotService {
                 );
     }
 
-    public void onIncidentClose(InstanceEntity instance, MonitorState finalState, String note) {
+    public void onIncidentClose(InstanceEntity instance, MonitorState finalState, String note, Map<String, Object> metrics) {
         snapshotRepository
                 .findByInstanceEntity_InstanceIdAndIncidentEndTimeIsNull(instance.getInstanceId())
                 .ifPresentOrElse(
                         incident -> {
                             // Append final reading
-                            MetricsInterval last = fetchInterval(instance, finalState, note);
+                            MetricsInterval last = MetricsInterval.builder()
+                                    .state(finalState)
+                                    .capturedAt(LocalDateTime.now())
+                                    .cpuUsage(parseDouble(metrics.get("cpu")))
+                                    .memoryUsage(parseDouble(metrics.get("memory")))
+                                    .diskUsage(parseDouble(metrics.get("disk")))
+                                    .networkIn(parseDouble(metrics.get("networkIn")))
+                                    .networkOut(parseDouble(metrics.get("networkOut")))
+                                    .systemLoad(parseDouble(metrics.get("load")))
+                                    .note(note)
+                                    .build();
                             List<MetricsInterval> timeline = parseTimeline(incident.getMetricsTimeline());
                             timeline.add(last);
 
@@ -99,34 +128,6 @@ public class IncidentSnapshotService {
                         },
                         () -> log.warn("No open incident for {} — cannot close", instance.getInstanceId())
                 );
-    }
-
-    // -------------------------------------------------------------------------
-    // Internal helpers
-    // -------------------------------------------------------------------------
-
-    private MetricsInterval fetchInterval(InstanceEntity instance, MonitorState state, String note) {
-        try {
-            Map<String, Object> m = prometheusService.getAllMetrics(instance.getInstanceId(),instance.getState());
-            return MetricsInterval.builder()
-                    .state(state)
-                    .capturedAt(LocalDateTime.now())
-                    .cpuUsage(parseDouble(m.get("cpu")))
-                    .memoryUsage(parseDouble(m.get("memory")))
-                    .diskUsage(parseDouble(m.get("disk")))
-                    .networkIn(parseDouble(m.get("networkIn")))
-                    .networkOut(parseDouble(m.get("networkOut")))
-                    .systemLoad(parseDouble(m.get("load")))
-                    .note(note)
-                    .build();
-        } catch (Exception e) {
-            log.error("Failed to fetch metrics for interval (instance={}): {}", instance.getInstanceId(), e.getMessage());
-            return MetricsInterval.builder()
-                    .state(state)
-                    .capturedAt(LocalDateTime.now())
-                    .note("metrics fetch failed: " + e.getMessage())
-                    .build();
-        }
     }
 
     private String buildAiContext(InstanceEntity instance,
