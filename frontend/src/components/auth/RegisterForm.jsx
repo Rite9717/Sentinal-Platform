@@ -111,7 +111,7 @@ const RegisterForm = ({ onSubmit, errors, serverError, loading, onFieldBlur }) =
         type="submit"
         disabled={loading}
         aria-busy={loading}
-        className="register-form__submit w-full rounded-2xl border border-cyan-300/40 bg-[linear-gradient(135deg,rgba(0,212,255,0.16),rgba(123,97,255,0.18))] px-4 py-3 text-sm uppercase tracking-[0.2em] text-cyan-50 transition-all duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+        className="register-form__submit w-full rounded-2xl bg-[#0f6b3d] px-4 py-3 text-sm font-semibold uppercase tracking-[0.12em] text-white shadow-[0_14px_28px_rgba(15,107,61,0.18)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#0b5a33] disabled:cursor-not-allowed disabled:opacity-60"
       >
         {loading ? 'Registering...' : 'Register'}
       </button>
@@ -135,7 +135,7 @@ function RegisterField({
 
   return (
     <label className="block space-y-2">
-      <span className="text-xs uppercase tracking-[0.24em] text-slate-500">{label}</span>
+      <span className="text-xs uppercase tracking-[0.12em] text-[#7b817c]">{label}</span>
       <input
         ref={refProp}
         id={id}
@@ -148,10 +148,10 @@ function RegisterField({
         aria-label={ariaLabel || label}
         aria-describedby={error ? errorId : undefined}
         aria-invalid={error ? 'true' : 'false'}
-        className={`register-form__input w-full rounded-2xl border bg-slate-950/60 px-4 py-3 text-sm text-slate-100 outline-none transition-all duration-200 placeholder:text-slate-600 focus:bg-slate-950 ${error ? 'register-form__input--error border-rose-400/40' : 'border-slate-800 focus:border-cyan-400/40'}`}
+        className={`register-form__input w-full rounded-2xl border bg-[#f6f7f3] px-4 py-3 text-sm text-[#111827] outline-none transition-all duration-200 placeholder:text-[#9ca3af] focus:bg-white ${error ? 'register-form__input--error border-rose-400/60' : 'border-black/10 focus:border-[#0f6b3d]/40'}`}
       />
       {error && (
-        <div id={errorId} className="register-form__field-error text-sm text-rose-300" role="alert">
+        <div id={errorId} className="register-form__field-error text-sm text-rose-600" role="alert">
           {error}
         </div>
       )}

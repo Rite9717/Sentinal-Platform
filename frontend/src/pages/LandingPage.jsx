@@ -5,126 +5,121 @@ const LandingPage = () => {
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
-
-        :root {
-          --bg: #020510;
-          --surface: #0a1628;
-          --border: #1a2d4a;
-          --text: #e8f4fd;
-          --muted: #5a7a9a;
-          --cyan: #00d4ff;
-          --violet: #7b61ff;
-          --success: #00ff88;
-        }
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap');
 
         body {
           font-family: 'JetBrains Mono', monospace;
-          background:
-            radial-gradient(circle at top, rgba(0, 212, 255, 0.12), transparent 32%),
-            radial-gradient(circle at right, rgba(123, 97, 255, 0.12), transparent 24%),
-            var(--bg);
-          color: var(--text);
+          background: #f6f7f3;
+          color: #111827;
         }
 
         h1, h2, h3 {
-          font-family: 'Orbitron', sans-serif;
-          letter-spacing: 0.08em;
+          font-family: 'Space Grotesk', sans-serif;
+          letter-spacing: -0.03em;
         }
       `}</style>
 
-      <div className="min-h-screen overflow-hidden bg-transparent text-[color:var(--text)]">
-        <div className="relative min-h-screen bg-[linear-gradient(rgba(255,255,255,0.015)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.015)_1px,transparent_1px)] bg-[size:48px_48px]">
-          <div className="pointer-events-none absolute inset-0 bg-[repeating-linear-gradient(180deg,rgba(255,255,255,0.025)_0px,rgba(255,255,255,0.025)_1px,transparent_1px,transparent_4px)] opacity-20" />
-          <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-6 py-8 lg:px-10">
-            <header className="flex items-center justify-between rounded-[24px] border border-[color:var(--border)] bg-[rgba(10,22,40,0.66)] px-5 py-4 backdrop-blur-xl">
-              <div className="flex items-center gap-4">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-400/40 bg-[linear-gradient(135deg,rgba(0,212,255,0.18),rgba(123,97,255,0.18))] shadow-[0_0_30px_rgba(0,212,255,0.15)]">
-                  <span className="text-sm font-semibold text-cyan-100">S</span>
-                </div>
-                <div>
-                  <p className="text-xs uppercase tracking-[0.35em] text-cyan-300/70">Sentinal Platform</p>
-                  <h1 className="text-base text-slate-50">AI Instance Command Center</h1>
-                </div>
+      <div className="min-h-screen bg-[#f6f7f3] px-5 py-5 text-[#111827]">
+        <div className="mx-auto grid min-h-[calc(100vh-40px)] max-w-[1500px] gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+          <aside className="hidden rounded-[32px] bg-[#eef2ed] p-7 shadow-[0_18px_60px_rgba(15,23,42,0.08)] lg:flex lg:flex-col">
+            <div className="flex items-center gap-4">
+              <div className="flex h-14 w-14 items-center justify-center rounded-3xl bg-[#0f6b3d] text-xl font-semibold text-white">S</div>
+              <div>
+                <p className="text-sm text-[#7b817c]">Sentinal</p>
+                <h1 className="text-2xl font-semibold">Ops Manager</h1>
               </div>
-              <div className="flex items-center gap-3">
-                <Link
-                  to="/login"
-                  className="rounded-2xl border border-slate-700/80 px-4 py-3 text-sm uppercase tracking-[0.18em] text-slate-300 transition-all duration-200 hover:border-cyan-400/40 hover:text-cyan-100"
-                >
+            </div>
+
+            <nav className="mt-16 space-y-3 text-lg text-[#7b817c]">
+              {['Dashboard', 'Instances', 'AI Chat', 'Telemetry'].map((item, index) => (
+                <div key={item} className={`rounded-2xl px-4 py-3 ${index === 0 ? 'bg-white text-[#0f6b3d] shadow-sm' : ''}`}>
+                  {item}
+                </div>
+              ))}
+            </nav>
+
+            <div className="mt-auto overflow-hidden rounded-[28px] bg-[#0b3f25] p-5 text-white">
+              <p className="text-2xl font-semibold leading-tight">Monitor incidents before they become outages.</p>
+              <p className="mt-3 text-sm leading-6 text-white/70">Register instances, inspect snapshots, and run AI analysis from one clean workspace.</p>
+              <Link to="/register" className="mt-6 inline-flex rounded-full bg-white px-5 py-3 text-sm font-semibold text-[#0f6b3d]">
+                Get started
+              </Link>
+            </div>
+          </aside>
+
+          <main className="rounded-[32px] bg-white p-6 shadow-[0_18px_60px_rgba(15,23,42,0.08)] md:p-8">
+            <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="flex items-center gap-3 lg:hidden">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#0f6b3d] text-white">S</div>
+                <span className="text-xl font-semibold">Sentinal</span>
+              </div>
+              <div className="hidden h-14 max-w-xl flex-1 items-center rounded-full bg-[#f6f7f3] px-5 text-[#9ca3af] md:flex">
+                Search instances, incidents, snapshots
+              </div>
+              <div className="flex gap-3">
+                <Link to="/login" className="rounded-full border border-[#0f6b3d] px-5 py-3 font-medium text-[#0f6b3d] transition hover:bg-[#eef2ed]">
                   Login
                 </Link>
-                <Link
-                  to="/register"
-                  className="rounded-2xl border border-cyan-300/40 bg-cyan-400/10 px-4 py-3 text-sm uppercase tracking-[0.18em] text-cyan-100 transition-all duration-200 hover:bg-cyan-400/20"
-                >
+                <Link to="/register" className="rounded-full bg-[#0f6b3d] px-5 py-3 font-medium text-white shadow-[0_14px_28px_rgba(15,107,61,0.18)] transition hover:bg-[#0b5a33]">
                   Register
                 </Link>
               </div>
             </header>
 
-            <section className="grid flex-1 items-center gap-10 py-10 lg:grid-cols-[1.25fr_0.95fr]">
+            <section className="mt-12 grid gap-8 lg:grid-cols-[minmax(0,1fr)_420px] lg:items-center">
               <div>
-                <p className="text-xs uppercase tracking-[0.38em] text-cyan-300/70">Dark Ops Command Layer</p>
-                <h2 className="mt-5 max-w-4xl text-4xl leading-tight text-slate-50 md:text-6xl">
-                  Register, monitor, and interrogate AI-connected compute from one secure surface.
+                <p className="text-sm font-medium text-[#0f6b3d]">AI Infrastructure Control Plane</p>
+                <h2 className="mt-4 max-w-4xl text-5xl font-semibold leading-[1.02] md:text-7xl">
+                  A clean dashboard for incidents, telemetry, and AI analysis.
                 </h2>
-                <p className="mt-6 max-w-3xl text-sm leading-8 text-slate-400 md:text-base">
-                  Sentinal is the operations console for EC2-backed AI infrastructure. Operators can onboard instances,
-                  configure IAM monitoring access, install telemetry tooling, inspect Grafana metrics, and review AI
-                  snapshot context from a unified dashboard.
+                <p className="mt-6 max-w-2xl text-lg leading-8 text-[#7b817c]">
+                  Sentinal helps operators register EC2 instances, connect monitoring roles, install the metrics stack, inspect Grafana context, and analyse lifecycle snapshots only when they choose.
                 </p>
-
                 <div className="mt-8 flex flex-wrap gap-4">
-                  <Link
-                    to="/register"
-                    className="rounded-2xl border border-cyan-300/40 bg-[linear-gradient(135deg,rgba(0,212,255,0.16),rgba(123,97,255,0.18))] px-6 py-4 text-sm uppercase tracking-[0.22em] text-cyan-50 shadow-[0_0_35px_rgba(0,212,255,0.12)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_10px_40px_rgba(0,212,255,0.2)]"
-                  >
+                  <Link to="/register" className="rounded-full bg-[#0f6b3d] px-7 py-4 text-base font-medium text-white shadow-[0_16px_36px_rgba(15,107,61,0.18)] transition hover:-translate-y-0.5 hover:bg-[#0b5a33]">
                     Launch Sentinal
                   </Link>
-                  <Link
-                    to="/login"
-                    className="rounded-2xl border border-slate-700/80 px-6 py-4 text-sm uppercase tracking-[0.22em] text-slate-300 transition-all duration-200 hover:border-slate-500 hover:text-slate-50"
-                  >
+                  <Link to="/login" className="rounded-full border border-black/10 px-7 py-4 text-base font-medium text-[#111827] transition hover:bg-[#f6f7f3]">
                     Operator Login
                   </Link>
                 </div>
-
-                <div className="mt-10 grid gap-4 md:grid-cols-3">
-                  {[
-                    ['Registry-Backed Onboarding', 'Guided flow for AWS account ID, instance ID, region, role/stack creation, and monitor registration.'],
-                    ['Grafana-Linked Telemetry', 'Every selected instance can render embedded Grafana panels and backend Prometheus metrics side by side.'],
-                    ['AI Snapshot Context', 'Read backend-generated AI context and analysis directly inside the command console for each target.'],
-                  ].map(([title, copy]) => (
-                    <div key={title} className="rounded-[24px] border border-[color:var(--border)] bg-[rgba(10,22,40,0.72)] p-5 backdrop-blur-sm">
-                      <h3 className="text-sm text-slate-100">{title}</h3>
-                      <p className="mt-3 text-sm leading-7 text-slate-500">{copy}</p>
-                    </div>
-                  ))}
-                </div>
               </div>
 
-              <div className="rounded-[32px] border border-[color:var(--border)] bg-[linear-gradient(180deg,rgba(10,22,40,0.92),rgba(6,14,28,0.94))] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.35)]">
-                <p className="text-xs uppercase tracking-[0.35em] text-cyan-300/70">Operator Workflow</p>
-                <div className="mt-6 space-y-4">
+              <div className="rounded-[32px] bg-[#f6f7f3] p-5">
+                <div className="rounded-[28px] bg-[#0f4f2d] p-6 text-white">
+                  <p className="text-sm text-white/70">Active fleet</p>
+                  <p className="mt-4 text-6xl font-semibold">24</p>
+                  <p className="mt-3 text-sm text-lime-100">+5 monitored nodes this month</p>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-4">
                   {[
-                    ['1. Identify the target', 'Enter AWS account ID, instance ID, region, and a nickname for the node.'],
-                    ['2. Grant monitoring access', 'Create the Sentinal IAM role or CloudFormation stack and paste the generated role ARN.'],
-                    ['3. Install the telemetry stack', 'Follow guided commands for Node Exporter, Prometheus, and Grafana on the instance.'],
-                    ['4. Observe and respond', 'Open the dashboard for state, live metrics, snapshots, and AI context.'],
-                  ].map(([title, copy]) => (
-                    <div key={title} className="rounded-[24px] border border-slate-800 bg-slate-950/35 p-5">
-                      <div className="flex items-center gap-3">
-                        <span className="h-2.5 w-2.5 rounded-full bg-[color:var(--success)] shadow-[0_0_16px_rgba(0,255,136,0.75)]" />
-                        <p className="text-sm uppercase tracking-[0.18em] text-slate-100">{title}</p>
-                      </div>
-                      <p className="mt-3 text-sm leading-7 text-slate-500">{copy}</p>
+                    ['Snapshots', '38'],
+                    ['Analyses', '12'],
+                    ['Recovered', '9'],
+                    ['Pending', '2'],
+                  ].map(([label, value]) => (
+                    <div key={label} className="rounded-[24px] bg-white p-5">
+                      <p className="text-sm text-[#7b817c]">{label}</p>
+                      <p className="mt-3 text-3xl font-semibold">{value}</p>
                     </div>
                   ))}
                 </div>
               </div>
             </section>
-          </div>
+
+            <section className="mt-10 grid gap-4 md:grid-cols-3">
+              {[
+                ['Guided onboarding', 'Account ID, instance ID, region, role setup, and telemetry install instructions in one flow.'],
+                ['Snapshot analysis', 'Select a saved lifecycle incident snapshot, edit the AI task, then run analysis on demand.'],
+                ['Grafana context', 'Open live metrics panels directly from the selected instance workspace.'],
+              ].map(([title, copy]) => (
+                <div key={title} className="rounded-[28px] bg-[#f6f7f3] p-6">
+                  <h3 className="text-xl font-semibold">{title}</h3>
+                  <p className="mt-3 text-sm leading-7 text-[#7b817c]">{copy}</p>
+                </div>
+              ))}
+            </section>
+          </main>
         </div>
       </div>
     </>

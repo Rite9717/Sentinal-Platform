@@ -45,6 +45,7 @@ public class InstanceController
                     instance.setQuarantineCount(0);
                     instance.setQuarantineUntil(0L);
                     instance.setLastError(null);
+                    instance.setMaxQuarantineCycles(2);
                     instanceRepository.save(instance);
                     return ResponseEntity.ok(Map.of("message", "Instance reset to UP"));
                 })

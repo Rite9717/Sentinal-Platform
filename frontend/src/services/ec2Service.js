@@ -48,10 +48,24 @@ export const getInstanceMetrics = async (instanceId) => {
 
 export const getInstanceSnapshots = async (instanceId) => {
   try {
-    const response = await apiClient.get(`/api/instances/${instanceId}/snapshots`);
+    const response = await apiClient.get(`/api/instances/${instanceId}/incidents`);
     return response.data;
   } catch (error) {
-    console.error('Error fetching instance snapshots:', error);
+    console.error('Error fetching instance incident snapshots:', error);
+    throw error;
+  }
+};
+
+export const analyseIncidentSnapshot = async ({ instanceId, snapshotId, prompt }) => {
+  try {
+    const response = await apiClient.post('/ai/agenticai/analyse', {
+      instanceId,
+      snapshotId,
+      prompt,
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error analysing incident snapshot:', error);
     throw error;
   }
 };
@@ -89,6 +103,7 @@ const ec2Service = {
   getUserInstances,
   getInstanceMetrics,
   getInstanceSnapshots,
+  analyseIncidentSnapshot,
   deleteInstance,
   resetInstance
 };

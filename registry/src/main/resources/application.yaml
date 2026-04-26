@@ -69,3 +69,10 @@ aws:
 
 prometheus:
   url: http://your-ec2-ip:9090
+
+sentinel:
+  ai:
+    service:
+      url: ${SENTINEL_AI_URL:http://localhost:8000}
+      enabled: ${SENTINEL_AI_ENABLED:false}
+      timeout: 30000

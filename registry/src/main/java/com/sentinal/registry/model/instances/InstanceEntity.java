@@ -38,6 +38,7 @@ public class InstanceEntity
     private Long stateChangedAt;
     private Long quarantineUntil;
 
+    @Column(columnDefinition = "TEXT")
     private String lastError;
 
     @ManyToOne

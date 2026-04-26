@@ -1,7 +1,13 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Client } from "@stomp/stompjs";
 
 export const useInstanceUpdates = (userId, onUpdate) => {
+    const onUpdateRef = useRef(onUpdate);
+
+    useEffect(() => {
+        onUpdateRef.current = onUpdate;
+    }, [onUpdate]);
+
     useEffect(() => {
         if(!userId) return;
         const client = new Client({
@@ -13,7 +19,7 @@ export const useInstanceUpdates = (userId, onUpdate) => {
                 console.log('WebSocket connected ✓');
                 client.subscribe(`/topic/instances/${userId}`, (message) => {
                     const update = JSON.parse(message.body);
-                    onUpdate(update);
+                    onUpdate.current(update);
                 });
             },
             onDisconnect: () => {
@@ -26,5 +32,5 @@ export const useInstanceUpdates = (userId, onUpdate) => {
 
         client.activate();
         return () => client.deactivate();
-    }, [userId, onUpdate]);
+    }, [userId]);
 };

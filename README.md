@@ -31,13 +31,16 @@ When an instance first leaves UP, Sentinal opens an **incident**. Metrics are ca
 React Frontend
       ↓
 Spring Boot Backend (Registry Service)
-      ↓                          ↓
-AWS STS (AssumeRole)       Prometheus (metrics)
-      ↓
-EC2 Health APIs (DescribeInstances, DescribeInstanceStatus)
+      ↓                          ↓                    ↓
+AWS STS (AssumeRole)       Prometheus (metrics)   Sentinel AI Agent (Python)
+      ↓                                                ↓
+EC2 Health APIs                                  Google Gemini API
+(DescribeInstances, DescribeInstanceStatus)
 ```
 
 The platform uses **cross-account IAM roles** — users never share AWS credentials. Instead, they create a minimal IAM role in their own AWS account that Sentinal assumes via STS. This is the same pattern used by Datadog, New Relic, and other cloud monitoring tools.
+
+The **Sentinel AI Agent** is a separate Python FastAPI service that analyzes incidents using Google Gemini AI to provide intelligent root cause analysis and remediation suggestions.
 
 ---
 
@@ -51,6 +54,12 @@ The platform uses **cross-account IAM roles** — users never share AWS credenti
 - Prometheus (metrics collection via PromQL)
 - Spring Mail (incident email alerts)
 - Scheduled health checks (every 15 seconds)
+
+**AI Service**
+- Python 3.11 + FastAPI
+- Google Gemini AI (gemini-1.5-flash)
+- Asynchronous incident analysis
+- 3-step agentic reasoning (Triage → Root Cause → Remediation)
 
 **Frontend**
 - React
@@ -69,6 +78,7 @@ The platform uses **cross-account IAM roles** — users never share AWS credenti
 - Cross-account IAM role support via AWS STS AssumeRole
 - Secure ExternalId per user to prevent confused deputy attacks
 - **Incident snapshots** — one record per incident with metrics captured at every state transition
+- **AI-powered analysis** — automatic root cause analysis using Google Gemini AI when incidents close
 - **AI-ready diagnostic prompt** — each closed incident generates a plain-English prompt you can send directly to any AI for root cause analysis
 - **Email alerts** — user is notified by email when their instance is terminated, including incident duration and auto-reboot attempts
 
@@ -127,6 +137,13 @@ aws:
 prometheus:
   url: http://localhost:9090
 
+sentinel:
+  ai:
+    service:
+      url: http://localhost:8000
+      enabled: true
+      timeout: 30000
+
 jwt:
   secret: YOUR_JWT_SECRET
   expiration: 86400000
@@ -145,7 +162,31 @@ cd registry
 
 Backend runs on `http://localhost:8080`
 
-### 4. Run the frontend
+### 4. Set up the AI Service (Optional but Recommended)
+
+The AI service provides intelligent incident analysis. See detailed setup in [`Sentinal AI/README.md`](Sentinal%20AI/README.md).
+
+Quick start:
+
+```bash
+cd "Sentinal AI"
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Create .env file with your Gemini API key
+cp .env.example .env
+# Edit .env and add your GEMINI_API_KEY
+
+# Start the service
+python sentinel_ai_agent.py
+```
+
+AI service runs on `http://localhost:8000`
+
+Get your free Gemini API key at: https://aistudio.google.com/app/apikey
+
+### 5. Run the frontend
 
 ```bash
 cd frontend
@@ -199,10 +240,23 @@ incident_end_time   : 2026-04-13 10:37:45
 resolution          : TERMINATED
 metrics_timeline    : [ ...one entry per state transition... ]
 ai_context          : full plain-English prompt ready to send to any AI
-ai_analysis         : null (populated after you call an AI with the context)
+ai_analysis         : AI-generated insights (triage, root cause, remediation)
 ```
 
 Each entry in `metrics_timeline` contains the state, timestamp, note explaining the trigger, and CPU / memory / disk / network / load values at that moment.
+
+### AI Analysis
+
+When an incident closes, the Sentinel AI Agent automatically:
+
+1. **Analyzes the incident** using Google Gemini AI
+2. **Performs 3-step analysis**:
+   - **Triage**: Identifies which metric degraded first and when
+   - **Root Cause**: Determines why the incident occurred
+   - **Remediation**: Suggests specific actions to prevent recurrence
+3. **Stores the analysis** in the `ai_analysis` field
+
+You can also trigger analysis manually via the API or view it in the dashboard.
 
 ### Email alert on termination
 
@@ -239,7 +293,9 @@ When an instance is terminated, the registered user receives an email containing
 | GET | `/api/instances/{id}/incidents` | All closed incidents, newest first |
 | GET | `/api/instances/{id}/incidents/active` | Currently open incident, if any |
 | GET | `/api/instances/{id}/incidents/{incidentId}/ai-context` | AI-ready diagnostic prompt for this incident |
+| POST | `/api/instances/{id}/incidents/{incidentId}/analyze` | Manually trigger AI analysis for an incident |
 | PATCH | `/api/instances/{id}/incidents/{incidentId}/ai-analysis` | Store AI response back into the incident record |
+| GET | `/api/instances/ai/health` | Check if AI service is available |
 
 ---
 
@@ -267,6 +323,12 @@ The CloudFormation template creates a role with the following minimal permission
 
 ```
 Sentinal-Platform/
+├── Sentinal AI/                     # Python AI service
+│   ├── sentinel_ai_agent.py         # FastAPI application
+│   ├── requirements.txt             # Python dependencies
+│   ├── Dockerfile                   # Docker image
+│   ├── docker-compose.yml           # Docker Compose setup
+│   └── README.md                    # AI service documentation
 ├── frontend/                        # React frontend
 │   └── src/
 │       ├── components/
@@ -279,12 +341,15 @@ Sentinal-Platform/
         │   │   ├── EC2/             # Health checks, state machine, instance controls
         │   │   ├── metrics/         # Prometheus integration
         │   │   ├── snapshot/        # Incident lifecycle and AI context generation
+        │   │   ├── ai/              # AI service client and orchestration
         │   │   ├── notification/    # Email alerts
         │   │   └── scheduler/       # 15-second health check scheduler
         │   ├── model/
         │   │   ├── instances/       # InstanceEntity, MonitorState
         │   │   ├── snapshot/        # IncidentSnapshot, MetricsInterval
         │   │   └── user/            # User entity
+        │   ├── dto/
+        │   │   └── ai/              # AI service DTOs
         │   ├── repository/          # Spring Data JPA repositories
         │   ├── security/            # JWT + OAuth2 config
         │   └── filter/              # JWT authentication filter
@@ -309,6 +374,8 @@ Sentinal-Platform/
 | `PROMETHEUS_URL` | Prometheus base URL (default: `http://localhost:9090`) |
 | `MAIL_USERNAME` | Gmail address for sending alerts |
 | `MAIL_PASSWORD` | Gmail App Password (not your real password) |
+| `SENTINEL_AI_URL` | AI service URL (default: `http://localhost:8000`) |
+| `SENTINEL_AI_ENABLED` | Enable AI analysis (default: `false`) |
 
 ---
 

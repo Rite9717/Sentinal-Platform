@@ -5,6 +5,7 @@ import com.sentinal.registry.model.snapshot.MetricsSnapshot;
 import com.sentinal.registry.repository.IncidentSnapshotRepository;
 import com.sentinal.registry.repository.InstanceRepository;
 import com.sentinal.registry.repository.MetricSnapshotRepository;
+import com.sentinal.registry.service.ai.AiAnalysisService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -12,6 +13,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/instances")
@@ -20,6 +22,7 @@ public class SnapshotController {
 
     private final IncidentSnapshotRepository incidentRepository;
     private final InstanceRepository instanceRepository;
+    private final AiAnalysisService aiAnalysisService;
 
     @GetMapping("/{id}/incidents")
     public ResponseEntity<?> getIncidents(@PathVariable Long id,
@@ -72,5 +75,35 @@ public class SnapshotController {
                     return ResponseEntity.ok().build();
                 })
                 .orElse(ResponseEntity.notFound().build());
+    }
+
+    @PostMapping("/{id}/incidents/{incidentId}/analyze")
+    public ResponseEntity<?> triggerAiAnalysis(@PathVariable Long id,
+                                               @PathVariable Long incidentId,
+                                               @AuthenticationPrincipal UserDetails userDetails) {
+        return instanceRepository.findById(id)
+                .filter(i -> i.getUser().getUsername().equals(userDetails.getUsername()))
+                .flatMap(i -> incidentRepository.findById(incidentId))
+                .map(incident -> {
+                    try {
+                        var response = aiAnalysisService.analyzeIncident(incident);
+                        incident.setAiAnalysis(response.getCombinedAnalysis());
+                        incidentRepository.save(incident);
+                        return ResponseEntity.ok(response);
+                    } catch (Exception e) {
+                        return ResponseEntity.status(500)
+                                .body(Map.of("error", "AI analysis failed: " + e.getMessage()));
+                    }
+                })
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/ai/health")
+    public ResponseEntity<?> checkAiServiceHealth() {
+        boolean available = aiAnalysisService.isAiServiceAvailable();
+        return ResponseEntity.ok(Map.of(
+                "available", available,
+                "message", available ? "AI service is available" : "AI service is not available"
+        ));
     }
 }

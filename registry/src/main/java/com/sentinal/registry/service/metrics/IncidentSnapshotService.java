@@ -5,6 +5,7 @@ import com.sentinal.registry.model.instances.MonitorState;
 import com.sentinal.registry.model.snapshot.IncidentSnapshot;
 import com.sentinal.registry.model.snapshot.MetricsInterval;
 import com.sentinal.registry.repository.IncidentSnapshotRepository;
+import com.sentinal.registry.service.ai.AiAnalysisService;
 import com.sentinal.registry.service.mail.MailService;
 import com.sentinal.registry.service.metrics.PrometheusService;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +26,7 @@ public class IncidentSnapshotService {
     private final IncidentSnapshotRepository snapshotRepository;
     private final ObjectMapper objectMapper;
     private final MailService mailService;
+    private final AiAnalysisService aiAnalysisService;
 
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
@@ -121,6 +123,16 @@ public class IncidentSnapshotService {
                             snapshotRepository.save(incident);
                             log.info("[INCIDENT CLOSED] instance={} resolution={} intervals={}",
                                     instance.getInstanceId(), finalState, timeline.size());
+                            
+//                            // Trigger AI analysis asynchronously
+//                            try {
+//                                aiAnalysisService.analyzeInstanceAsync(instance);
+//                                log.info("AI analysis triggered for instance {}", instance.getInstanceId());
+//                            } catch (Exception e) {
+//                                log.error("Failed to trigger AI analysis for instance {}: {}",
+//                                        instance.getInstanceId(), e.getMessage());
+//                            }
+//
                             if(finalState == MonitorState.TERMINATED)
                             {
                                 mailService.sendTerminationAlert(instance,incident);

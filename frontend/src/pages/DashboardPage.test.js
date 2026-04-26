@@ -52,13 +52,17 @@ describe('DashboardPage', () => {
     });
     ec2Service.getInstanceSnapshots.mockResolvedValue([
       {
-        Id: 10,
-        snapshotTime: '2026-04-12T10:15:00',
+        id: 10,
+        incidentStartTime: '2026-04-12T10:15:00',
+        incidentEndTime: '2026-04-12T10:20:00',
+        resolution: 'UP',
+        metricsTimeline: '[]',
         aiAnalysis: 'CPU remains healthy and no incident pattern is currently detected.',
-        cpuUsage: 34.2,
-        memoryUsage: 51.7,
       },
     ]);
+    ec2Service.analyseIncidentSnapshot.mockResolvedValue({
+      combinedAnalysis: 'Agentic analysis completed for the selected lifecycle snapshot.',
+    });
     ec2Service.registerInstance.mockResolvedValue({});
     ec2Service.resetInstance.mockResolvedValue({});
     ec2Service.deleteInstance.mockResolvedValue({});
@@ -101,8 +105,35 @@ describe('DashboardPage', () => {
       expect(ec2Service.getInstanceSnapshots).toHaveBeenCalledWith(1);
     });
 
-    expect(screen.getByText(/Context Channel/i)).toBeInTheDocument();
+    expect(screen.getByText(/Analysis Workspace/i)).toBeInTheDocument();
     expect(screen.getAllByText(/CPU remains healthy/i).length).toBeGreaterThan(0);
+    expect(ec2Service.analyseIncidentSnapshot).not.toHaveBeenCalled();
+  });
+
+  test('starts AI analysis for the selected lifecycle snapshot only after send', async () => {
+    render(<DashboardPage />);
+
+    await waitFor(() => {
+      expect(ec2Service.getUserInstances).toHaveBeenCalled();
+    });
+
+    fireEvent.click(screen.getAllByText(/Open Chat/i)[0]);
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue(/Analyse this selected lifecycle snapshot/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      expect(ec2Service.analyseIncidentSnapshot).toHaveBeenCalledWith({
+        instanceId: 1,
+        snapshotId: 10,
+        prompt: expect.stringMatching(/Analyse this selected lifecycle snapshot/i),
+      });
+    });
+
+    expect(screen.getByText(/Agentic analysis completed/i)).toBeInTheDocument();
   });
 
   test('logs out and navigates to login', async () => {

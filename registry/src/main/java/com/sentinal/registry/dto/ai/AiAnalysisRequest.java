@@ -1,0 +1,23 @@
+package com.sentinal.registry.dto.ai;
+
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.util.List;
+
+/**
+ * Request payload for the Sentinel AI Analysis Service.
+ * Matches the Python FastAPI AnalyzeRequest model.
+ */
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class AiAnalysisRequest {
+    private AiInstanceDetails instance;
+    private List<AiIncidentSnapshot> incidentSnapshots;
+    private List<AiMetricsSnapshot> metricsSnapshots;
+    private String analysisTask;
+}

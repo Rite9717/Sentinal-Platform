@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import InstanceRegistrationWizard from '../components/ec2/InstanceRegistrationWizard';
 import {
+  analyseIncidentSnapshot,
   deleteInstance,
   getInstanceMetrics,
   getInstanceSnapshots,
@@ -26,6 +27,23 @@ const GRAFANA_PANELS = {
   network: process.env.REACT_APP_GRAFANA_PANEL_NETWORK,
 };
 
+const DEFAULT_AI_TASK = 'Analyse this selected lifecycle snapshot end to end. Identify the first degraded signal, explain the state transitions, infer the most likely root cause, and give immediate, short-term, long-term, and Sentinal configuration remediation steps.';
+
+const TASK_PRESETS = [
+  {
+    label: 'Root Cause',
+    value: 'Analyse this lifecycle snapshot and focus on the most likely root cause. Call out the first degraded metric, exact timestamps, and the state transition that proves the diagnosis.',
+  },
+  {
+    label: 'Fix Plan',
+    value: 'Create an operator remediation plan for this lifecycle snapshot. Separate immediate action, short-term fix, long-term fix, and Sentinal threshold/configuration recommendations.',
+  },
+  {
+    label: 'Brief',
+    value: 'Summarise this lifecycle snapshot for an incident review. Keep it concise: what happened, why it happened, user impact, and the next owner action.',
+  },
+];
+
 const DashboardPage = () => {
   const navigate = useNavigate();
   const { user, logout, updateProfile } = useAuth();
@@ -34,9 +52,12 @@ const DashboardPage = () => {
   const [instances, setInstances] = useState([]);
   const [metricsById, setMetricsById] = useState({});
   const [snapshotsById, setSnapshotsById] = useState({});
+  const [snapshotsLoadingById, setSnapshotsLoadingById] = useState({});
+  const [snapshotSyncedAtById, setSnapshotSyncedAtById] = useState({});
   const [localMessagesById, setLocalMessagesById] = useState({});
   const [selectedInstanceId, setSelectedInstanceId] = useState(null);
-  const [draftMessage, setDraftMessage] = useState('');
+  const [selectedSnapshotId, setSelectedSnapshotId] = useState(null);
+  const [draftMessage, setDraftMessage] = useState(DEFAULT_AI_TASK);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actionInstanceId, setActionInstanceId] = useState(null);
@@ -46,8 +67,8 @@ const DashboardPage = () => {
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileForm, setProfileForm] = useState({ username: '', fullName: '' });
   const [isTyping, setIsTyping] = useState(false);
-  const endOfMessagesRef = useRef(null);
-  const replyTimerRef = useRef(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const chatScrollRef = useRef(null);
 
   const selectedInstance = useMemo(
     () => instances.find((instance) => String(instance.id) === String(selectedInstanceId)) ?? instances[0] ?? null,
@@ -55,42 +76,44 @@ const DashboardPage = () => {
   );
 
   const selectedMetrics = selectedInstance ? metricsById[selectedInstance.id] ?? null : null;
+  const selectedSnapshots = useMemo(
+    () => (selectedInstance ? snapshotsById[selectedInstance.id] ?? [] : []),
+    [selectedInstance, snapshotsById]
+  );
+  const selectedSnapshot = useMemo(
+    () => selectedSnapshots.find((snapshot) => String(snapshot.id) === String(selectedSnapshotId)) ?? selectedSnapshots[0] ?? null,
+    [selectedSnapshotId, selectedSnapshots]
+  );
 
   const selectedMessages = useMemo(() => {
     if (!selectedInstance) {
       return [];
     }
 
-    const snapshotMessages = (snapshotsById[selectedInstance.id] ?? [])
-      .slice()
-      .sort((left, right) => new Date(left.snapshotTime || 0) - new Date(right.snapshotTime || 0))
-      .flatMap((snapshot) => {
-        const snapshotId = snapshot.id ?? snapshot.Id ?? snapshot.snapshotTime;
-        const messages = [
+    const snapshotMessages = selectedSnapshot
+      ? [
           {
-            id: `snapshot-meta-${snapshotId}`,
+            id: `snapshot-meta-${selectedSnapshot.id}`,
             sender: 'user',
-            text: buildSnapshotSummary(snapshot),
-            timestamp: formatTimestamp(snapshot.snapshotTime),
+            text: buildSnapshotSummary(selectedSnapshot),
+            timestamp: formatTimestamp(selectedSnapshot.incidentStartTime || selectedSnapshot.incidentEndTime),
           },
-        ];
-
-        if (snapshot.aiAnalysis || snapshot.aiContext) {
-          messages.push({
-            id: `snapshot-ai-${snapshotId}`,
-            sender: 'ai',
-            text: snapshot.aiAnalysis || snapshot.aiContext,
-            timestamp: formatTimestamp(snapshot.snapshotTime),
-          });
-        }
-
-        return messages;
-      });
+          ...(selectedSnapshot.aiAnalysis || selectedSnapshot.aiContext
+            ? [{
+                id: `snapshot-ai-${selectedSnapshot.id}`,
+                sender: 'ai',
+                text: selectedSnapshot.aiAnalysis || selectedSnapshot.aiContext,
+                timestamp: formatTimestamp(selectedSnapshot.incidentEndTime || selectedSnapshot.incidentStartTime),
+              }]
+            : []),
+        ]
+      : [];
 
     return [...snapshotMessages, ...(localMessagesById[selectedInstance.id] ?? [])];
-  }, [localMessagesById, selectedInstance, snapshotsById]);
+  }, [localMessagesById, selectedInstance, selectedSnapshot]);
 
-  const tokenEstimate = draftMessage.trim() ? Math.round(draftMessage.trim().split(/\s+/).length * 1.35) : 0;
+  const effectiveAiTask = draftMessage.trim() || DEFAULT_AI_TASK;
+  const tokenEstimate = Math.round(effectiveAiTask.split(/\s+/).length * 1.35);
 
   const loadMetricsForInstance = useCallback(async (instanceId, silent = false) => {
     try {
@@ -104,11 +127,15 @@ const DashboardPage = () => {
   }, []);
 
   const loadSnapshots = useCallback(async (instanceId) => {
+    setSnapshotsLoadingById((current) => ({ ...current, [instanceId]: true }));
     try {
       const snapshots = await getInstanceSnapshots(instanceId);
       setSnapshotsById((current) => ({ ...current, [instanceId]: snapshots }));
+      setSnapshotSyncedAtById((current) => ({ ...current, [instanceId]: new Date().toISOString() }));
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load AI context snapshots');
+    } finally {
+      setSnapshotsLoadingById((current) => ({ ...current, [instanceId]: false }));
     }
   }, []);
 
@@ -146,9 +173,6 @@ const DashboardPage = () => {
 
     return () => {
       window.clearInterval(interval);
-      if (replyTimerRef.current) {
-        window.clearTimeout(replyTimerRef.current);
-      }
     };
   }, [loadDashboard]);
 
@@ -170,8 +194,26 @@ const DashboardPage = () => {
   }, [activeScreen, loadSnapshots, selectedInstance?.id]);
 
   useEffect(() => {
-    if (typeof endOfMessagesRef.current?.scrollIntoView === 'function') {
-      endOfMessagesRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    if (!selectedSnapshots.length) {
+      setSelectedSnapshotId(null);
+      return;
+    }
+
+    if (!selectedSnapshotId || !selectedSnapshots.some((snapshot) => String(snapshot.id) === String(selectedSnapshotId))) {
+      setSelectedSnapshotId(selectedSnapshots[0].id);
+    }
+  }, [selectedSnapshotId, selectedSnapshots]);
+
+  useEffect(() => {
+    if (chatScrollRef.current) {
+      if (typeof chatScrollRef.current.scrollTo === 'function') {
+        chatScrollRef.current.scrollTo({
+          top: chatScrollRef.current.scrollHeight,
+          behavior: 'smooth',
+        });
+      } else {
+        chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+      }
     }
   }, [selectedMessages, activeScreen, isTyping]);
 
@@ -271,35 +313,37 @@ const DashboardPage = () => {
     }
   };
 
-  const handleSendMessage = () => {
-    if (!selectedInstance || !draftMessage.trim()) {
+  const handleSendMessage = async () => {
+    if (!selectedInstance || !selectedSnapshot || analysisLoading) {
       return;
     }
 
+    const prompt = effectiveAiTask;
     const userMessage = {
       id: `local-user-${Date.now()}`,
       sender: 'user',
-      text: draftMessage.trim(),
+      text: prompt,
       timestamp: formatTimestamp(new Date().toISOString()),
     };
 
-    const prompt = draftMessage.trim();
     setLocalMessagesById((current) => ({
       ...current,
       [selectedInstance.id]: [...(current[selectedInstance.id] ?? []), userMessage],
     }));
-    setDraftMessage('');
     setIsTyping(true);
+    setAnalysisLoading(true);
 
-    if (replyTimerRef.current) {
-      window.clearTimeout(replyTimerRef.current);
-    }
+    try {
+      const response = await analyseIncidentSnapshot({
+        instanceId: selectedInstance.id,
+        snapshotId: selectedSnapshot.id,
+        prompt,
+      });
 
-    replyTimerRef.current = window.setTimeout(() => {
       const aiMessage = {
         id: `local-ai-${Date.now()}`,
         sender: 'ai',
-        text: buildOperatorResponse(selectedInstance, selectedMetrics, snapshotsById[selectedInstance.id] ?? [], prompt),
+        text: response.combinedAnalysis || response.remediation || response.rootCause || 'Analysis completed, but no narrative was returned.',
         timestamp: formatTimestamp(new Date().toISOString()),
       };
 
@@ -307,47 +351,62 @@ const DashboardPage = () => {
         ...current,
         [selectedInstance.id]: [...(current[selectedInstance.id] ?? []), aiMessage],
       }));
+      await loadSnapshots(selectedInstance.id);
+    } catch (err) {
+      const message = err.response?.data?.message || err.response?.data?.error || 'AI analysis failed. Check the backend and Sentinal AI service logs.';
+      setLocalMessagesById((current) => ({
+        ...current,
+        [selectedInstance.id]: [
+          ...(current[selectedInstance.id] ?? []),
+          {
+            id: `local-ai-error-${Date.now()}`,
+            sender: 'ai',
+            text: message,
+            timestamp: formatTimestamp(new Date().toISOString()),
+          },
+        ],
+      }));
+      setError(message);
+    } finally {
       setIsTyping(false);
-    }, 900);
+      setAnalysisLoading(false);
+    }
   };
 
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap');
 
         :root {
-          --bg: #020510;
-          --surface: #0a1628;
-          --surface-strong: rgba(10, 22, 40, 0.84);
-          --border: #1a2d4a;
-          --text: #e8f4fd;
-          --muted: #5a7a9a;
-          --cyan: #00d4ff;
-          --violet: #7b61ff;
-          --success: #00ff88;
-          --warning: #f5a623;
-          --danger: #ff4757;
+          --bg: #f6f7f3;
+          --surface: #ffffff;
+          --surface-strong: #f0f3ed;
+          --border: rgba(15, 23, 42, 0.08);
+          --text: #111827;
+          --muted: #6b7280;
+          --cyan: #0f6b3d;
+          --violet: #8b5cf6;
+          --success: #137a45;
+          --warning: #d97706;
+          --danger: #dc2626;
           --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
         }
 
         body {
           font-family: 'JetBrains Mono', monospace;
           color: var(--text);
-          background:
-            radial-gradient(circle at top, rgba(0, 212, 255, 0.12), transparent 30%),
-            radial-gradient(circle at right, rgba(123, 97, 255, 0.12), transparent 24%),
-            var(--bg);
+          background: var(--bg);
         }
 
         h1, h2, h3, h4 {
-          font-family: 'Orbitron', sans-serif;
-          letter-spacing: 0.08em;
+          font-family: 'Space Grotesk', sans-serif;
+          letter-spacing: -0.02em;
         }
 
         * {
           scrollbar-width: thin;
-          scrollbar-color: rgba(26, 45, 74, 0.95) rgba(2, 5, 16, 0.2);
+          scrollbar-color: rgba(15, 107, 61, 0.45) rgba(226, 232, 240, 0.8);
         }
 
         *::-webkit-scrollbar {
@@ -356,11 +415,11 @@ const DashboardPage = () => {
         }
 
         *::-webkit-scrollbar-track {
-          background: rgba(2, 5, 16, 0.35);
+          background: rgba(226, 232, 240, 0.8);
         }
 
         *::-webkit-scrollbar-thumb {
-          background: linear-gradient(180deg, rgba(0, 212, 255, 0.3), rgba(123, 97, 255, 0.3));
+          background: rgba(15, 107, 61, 0.45);
           border-radius: 9999px;
           border: 1px solid rgba(26, 45, 74, 0.9);
         }
@@ -371,8 +430,8 @@ const DashboardPage = () => {
         }
 
         @keyframes hoverPulse {
-          0%, 100% { box-shadow: 0 0 0 rgba(0, 212, 255, 0.12); }
-          50% { box-shadow: 0 0 22px rgba(0, 212, 255, 0.2); }
+          0%, 100% { box-shadow: 0 0 0 rgba(56, 189, 248, 0.08); }
+          50% { box-shadow: 0 0 20px rgba(56, 189, 248, 0.14); }
         }
 
         @keyframes shimmerSweep {
@@ -386,29 +445,25 @@ const DashboardPage = () => {
         }
       `}</style>
 
-      <div className="min-h-screen bg-transparent text-[color:var(--text)]">
-        <div className="relative flex min-h-screen overflow-hidden bg-[linear-gradient(rgba(255,255,255,0.015)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.015)_1px,transparent_1px)] bg-[size:48px_48px]">
-          <div className="pointer-events-none absolute inset-0 bg-[repeating-linear-gradient(180deg,rgba(255,255,255,0.025)_0px,rgba(255,255,255,0.025)_1px,transparent_1px,transparent_4px)] opacity-20" />
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(0,212,255,0.14),transparent_30%),radial-gradient(circle_at_bottom_right,rgba(123,97,255,0.12),transparent_28%)]" />
-
-          <aside className={`relative z-10 flex h-screen shrink-0 flex-col border-r border-[color:var(--border)] bg-[rgba(10,22,40,0.72)] backdrop-blur-xl transition-all duration-200 ease-[var(--ease-out)] ${sidebarCollapsed ? 'w-24' : 'w-72'}`}>
-            <div className="flex items-center justify-between border-b border-[color:var(--border)] px-5 py-5">
+      <div className="min-h-screen bg-[#f6f7f3] text-[#111827]">
+        <div className="relative min-h-screen">
+          <aside className={`fixed bottom-5 left-5 top-5 z-20 flex flex-col overflow-hidden rounded-[32px] border border-black/5 bg-[#eef2ed] text-[#111827] shadow-[0_18px_60px_rgba(15,23,42,0.08)] transition-all duration-200 ease-[var(--ease-out)] ${sidebarCollapsed ? 'w-24' : 'w-72'}`}>
+            <div className="flex items-center justify-between px-6 py-6">
               <div className="flex items-center gap-3 overflow-hidden">
-                <div className="relative flex h-11 w-11 items-center justify-center rounded-2xl border border-cyan-400/40 bg-[linear-gradient(135deg,rgba(0,212,255,0.22),rgba(123,97,255,0.16))] shadow-[0_0_35px_rgba(0,212,255,0.14)]">
-                  <span className="absolute inset-x-2 top-0 h-px bg-cyan-300/90" />
-                  <CoreIcon className="h-5 w-5 text-cyan-200" />
+                <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-[#0f6b3d] text-white shadow-[0_12px_30px_rgba(15,107,61,0.2)]">
+                  <CoreIcon className="h-6 w-6" />
                 </div>
                 {!sidebarCollapsed && (
                   <div className="min-w-0">
-                    <p className="truncate text-xs uppercase tracking-[0.35em] text-cyan-300/70">Sentinal Ops</p>
-                    <h1 className="truncate text-lg font-semibold text-slate-100">Registry Command Grid</h1>
+                    <p className="truncate text-xs uppercase tracking-[0.18em] text-[#6b7280]">Sentinal</p>
+                    <h1 className="truncate text-xl font-semibold text-[#111827]">Instance Manager</h1>
                   </div>
                 )}
               </div>
               <button
                 type="button"
                 onClick={() => setSidebarCollapsed((current) => !current)}
-                className="rounded-xl border border-slate-700/70 bg-slate-950/40 p-2 text-slate-300 transition-all duration-200 hover:border-cyan-400/40 hover:bg-cyan-400/10 hover:text-cyan-200"
+                className="rounded-2xl border border-black/5 bg-white p-2 text-[#111827] shadow-sm transition-all duration-200 hover:bg-[#e2eadf]"
                 aria-label="Toggle sidebar"
               >
                 <PanelIcon className="h-4 w-4" />
@@ -425,45 +480,45 @@ const DashboardPage = () => {
                       key={item.id}
                       type="button"
                       onClick={() => setActiveScreen(item.id)}
-                      className={`group relative flex w-full items-center gap-3 overflow-hidden rounded-2xl border px-4 py-3 text-left transition-all duration-200 ${active ? 'border-cyan-400/35 bg-cyan-400/10 text-cyan-100 shadow-[inset_3px_0_0_rgba(0,212,255,0.95),0_0_25px_rgba(0,212,255,0.12)]' : 'border-transparent bg-transparent text-slate-400 hover:border-slate-700/70 hover:bg-slate-900/60 hover:text-slate-100'}`}
+                      className={`group relative flex w-full items-center gap-3 overflow-hidden rounded-2xl px-4 py-3 text-left transition-all duration-200 ${active ? 'bg-white text-[#0f6b3d] shadow-sm' : 'text-[#7b817c] hover:bg-white/70 hover:text-[#111827]'}`}
                     >
-                      <span className={`absolute left-0 top-2 h-10 w-[3px] rounded-r-full bg-cyan-300 transition-opacity duration-200 ${active ? 'opacity-100' : 'opacity-0 group-hover:opacity-70'}`} />
+                      <span className={`absolute left-0 top-2 h-10 w-1 rounded-r-full bg-[#0f6b3d] transition-opacity duration-200 ${active ? 'opacity-100' : 'opacity-0 group-hover:opacity-70'}`} />
                       <Icon className="h-5 w-5 shrink-0" />
-                      {!sidebarCollapsed && <span className="text-sm uppercase tracking-[0.2em]">{item.label}</span>}
+                      {!sidebarCollapsed && <span className="text-base">{item.label}</span>}
                     </button>
                   );
                 })}
               </div>
 
-              <div className="my-6 h-px bg-gradient-to-r from-transparent via-slate-700 to-transparent" />
+              <div className="my-6 h-px bg-black/5" />
 
               <button
                 type="button"
-                className="group relative flex w-full items-center gap-3 rounded-2xl border border-transparent px-4 py-3 text-left text-slate-500 transition-all duration-200 hover:border-slate-700/70 hover:bg-slate-900/60 hover:text-slate-200"
+                className="group relative flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-[#7b817c] transition-all duration-200 hover:bg-white/70 hover:text-[#111827]"
               >
                 <span className="absolute left-0 top-2 h-10 w-[3px] rounded-r-full bg-violet-400 opacity-0 transition-opacity duration-200 group-hover:opacity-70" />
                 <GearIcon className="h-5 w-5 shrink-0" />
-                {!sidebarCollapsed && <span className="text-sm uppercase tracking-[0.2em]">Settings</span>}
+                {!sidebarCollapsed && <span className="text-base">Settings</span>}
               </button>
             </nav>
 
-            <div className="space-y-3 border-t border-[color:var(--border)] p-4">
+            <div className="space-y-3 border-t border-black/5 p-4">
               {!sidebarCollapsed && (
-                <div className="rounded-2xl border border-slate-800/80 bg-slate-950/40 px-4 py-3 text-xs uppercase tracking-[0.2em] text-slate-500">
+                <div className="rounded-2xl bg-white px-4 py-3 text-xs uppercase tracking-[0.16em] text-[#6b7280] shadow-sm">
                   {refreshing ? 'Syncing telemetry...' : 'Telemetry link stable'}
                 </div>
               )}
-              <div className="flex items-center gap-3 rounded-2xl border border-slate-800/80 bg-slate-950/40 px-3 py-3">
-                <div className="relative h-11 w-11 shrink-0 rounded-2xl border border-cyan-400/30 bg-[linear-gradient(135deg,rgba(0,212,255,0.18),rgba(123,97,255,0.18))]">
-                  <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-cyan-100">
+              <div className="flex items-center gap-3 rounded-3xl bg-white px-3 py-3 shadow-sm">
+                <div className="relative h-11 w-11 shrink-0 rounded-2xl bg-[#0f6b3d]/10">
+                  <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-[#0f6b3d]">
                     {getUserInitials(user?.fullName || user?.username || 'OP')}
                   </div>
-                  <span className="absolute bottom-1 right-1 h-2.5 w-2.5 rounded-full bg-[color:var(--success)] shadow-[0_0_14px_rgba(0,255,136,0.8)]" />
+                  <span className="absolute bottom-1 right-1 h-2.5 w-2.5 rounded-full bg-[color:var(--success)]" />
                 </div>
                 {!sidebarCollapsed && (
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-slate-100">{user?.fullName || user?.username || 'Operator'}</p>
-                    <p className="truncate text-xs uppercase tracking-[0.2em] text-slate-500">{user?.role || 'Registry User'}</p>
+                    <p className="truncate text-sm text-[#111827]">{user?.fullName || user?.username || 'Operator'}</p>
+                    <p className="truncate text-xs text-[#7b817c]">{user?.role || 'Registry User'}</p>
                   </div>
                 )}
                 {!sidebarCollapsed && (
@@ -471,14 +526,14 @@ const DashboardPage = () => {
                     <button
                       type="button"
                       onClick={() => setProfileModalOpen(true)}
-                      className="rounded-xl border border-cyan-400/20 bg-cyan-400/10 px-3 py-2 text-[11px] uppercase tracking-[0.2em] text-cyan-100 transition-all duration-200 hover:border-cyan-300/40 hover:bg-cyan-400/20"
+                      className="rounded-xl bg-[#edf5ef] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#0f6b3d] transition-all duration-200 hover:bg-[#dcebe0]"
                     >
                       Profile
                     </button>
                     <button
                       type="button"
                       onClick={handleLogout}
-                      className="rounded-xl border border-rose-400/20 bg-rose-400/10 px-3 py-2 text-[11px] uppercase tracking-[0.2em] text-rose-100 transition-all duration-200 hover:border-rose-300/40 hover:bg-rose-400/20"
+                      className="rounded-xl px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#7b817c] transition-all duration-200 hover:bg-rose-50 hover:text-rose-600"
                     >
                       Logout
                     </button>
@@ -488,10 +543,10 @@ const DashboardPage = () => {
             </div>
           </aside>
 
-          <main className="relative z-10 flex min-h-screen flex-1 flex-col">
+          <main className={`relative z-10 h-screen overflow-y-auto transition-[margin] duration-200 ${sidebarCollapsed ? 'ml-[8.5rem]' : 'ml-[22.25rem]'}`}>
             {error && (
               <div className="px-5 pt-5 md:px-8">
-                <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                   {error}
                 </div>
               </div>
@@ -517,35 +572,41 @@ const DashboardPage = () => {
                 selectedInstance={selectedInstance}
                 selectedMetrics={selectedMetrics}
                 selectedMessages={selectedMessages}
-                snapshots={selectedInstance ? snapshotsById[selectedInstance.id] ?? [] : []}
+                snapshots={selectedSnapshots}
+                selectedSnapshot={selectedSnapshot}
+                selectedSnapshotId={selectedSnapshotId}
+                snapshotsLoading={selectedInstance ? snapshotsLoadingById[selectedInstance.id] : false}
+                snapshotSyncedAt={selectedInstance ? snapshotSyncedAtById[selectedInstance.id] : null}
                 draftMessage={draftMessage}
                 onDraftChange={setDraftMessage}
                 onSelectInstance={(instanceId) => {
                   setSelectedInstanceId(instanceId);
                   loadSnapshots(instanceId);
                 }}
+                onSelectSnapshot={setSelectedSnapshotId}
+                onRefreshSnapshots={() => selectedInstance?.id && loadSnapshots(selectedInstance.id)}
                 onSend={handleSendMessage}
                 isTyping={isTyping}
-                endOfMessagesRef={endOfMessagesRef}
+                analysisLoading={analysisLoading}
+                chatScrollRef={chatScrollRef}
                 tokenEstimate={tokenEstimate}
               />
             )}
           </main>
 
           {modalOpen && (
-            <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#020510]/80 px-4 backdrop-blur-sm">
+            <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/30 px-4 backdrop-blur-sm">
               <div className="absolute inset-0" onClick={() => setModalOpen(false)} aria-hidden="true" />
-              <div className="relative w-full max-w-3xl overflow-hidden rounded-[28px] border border-cyan-400/20 bg-[linear-gradient(180deg,rgba(10,22,40,0.98),rgba(6,14,26,0.96))] shadow-[0_25px_100px_rgba(0,0,0,0.55)]">
-                <div className="absolute inset-x-10 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(0,212,255,0.9),transparent)]" />
-                <div className="flex items-center justify-between border-b border-[color:var(--border)] px-6 py-5">
+              <div className="relative w-full max-w-3xl overflow-hidden rounded-[32px] bg-white shadow-[0_28px_90px_rgba(15,23,42,0.18)]">
+                <div className="flex items-center justify-between border-b border-black/5 px-6 py-5">
                   <div>
-                    <p className="text-xs uppercase tracking-[0.35em] text-cyan-300/75">Provision Registry Target</p>
-                    <h2 className="mt-2 text-xl text-slate-50">Register Instance</h2>
+                    <p className="text-xs uppercase tracking-[0.18em] text-[#0f6b3d]">Provision Registry Target</p>
+                    <h2 className="mt-2 text-xl text-[#111827]">Register Instance</h2>
                   </div>
                   <button
                     type="button"
                     onClick={() => setModalOpen(false)}
-                    className="rounded-xl border border-slate-700/80 bg-slate-950/50 p-2 text-slate-400 transition-all duration-200 hover:border-slate-500 hover:text-slate-100"
+                    className="rounded-xl bg-[#f3f5f1] p-2 text-[#6b7280] transition-all duration-200 hover:bg-[#e8eee5] hover:text-[#111827]"
                     aria-label="Close modal"
                   >
                     <CloseIcon className="h-4 w-4" />
@@ -563,19 +624,18 @@ const DashboardPage = () => {
           )}
 
           {profileModalOpen && (
-            <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#020510]/80 px-4 backdrop-blur-sm">
+            <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/30 px-4 backdrop-blur-sm">
               <div className="absolute inset-0" onClick={() => setProfileModalOpen(false)} aria-hidden="true" />
-              <div className="relative w-full max-w-lg overflow-hidden rounded-[28px] border border-cyan-400/20 bg-[linear-gradient(180deg,rgba(10,22,40,0.98),rgba(6,14,26,0.96))] shadow-[0_25px_100px_rgba(0,0,0,0.55)]">
-                <div className="absolute inset-x-10 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(0,212,255,0.9),transparent)]" />
-                <div className="flex items-center justify-between border-b border-[color:var(--border)] px-6 py-5">
+              <div className="relative w-full max-w-lg overflow-hidden rounded-[32px] bg-white shadow-[0_28px_90px_rgba(15,23,42,0.18)]">
+                <div className="flex items-center justify-between border-b border-black/5 px-6 py-5">
                   <div>
-                    <p className="text-xs uppercase tracking-[0.35em] text-cyan-300/75">Operator Identity</p>
-                    <h2 className="mt-2 text-xl text-slate-50">Edit Profile</h2>
+                    <p className="text-xs uppercase tracking-[0.18em] text-[#0f6b3d]">Operator Identity</p>
+                    <h2 className="mt-2 text-xl text-[#111827]">Edit Profile</h2>
                   </div>
                   <button
                     type="button"
                     onClick={() => setProfileModalOpen(false)}
-                    className="rounded-xl border border-slate-700/80 bg-slate-950/50 p-2 text-slate-400 transition-all duration-200 hover:border-slate-500 hover:text-slate-100"
+                    className="rounded-xl bg-[#f3f5f1] p-2 text-[#6b7280] transition-all duration-200 hover:bg-[#e8eee5] hover:text-[#111827]"
                     aria-label="Close profile modal"
                   >
                     <CloseIcon className="h-4 w-4" />
@@ -583,44 +643,44 @@ const DashboardPage = () => {
                 </div>
                 <form onSubmit={handleProfileSave} className="space-y-5 px-6 py-6">
                   <label className="block space-y-2">
-                    <span className="text-xs uppercase tracking-[0.24em] text-slate-500">Username</span>
+                    <span className="text-xs uppercase tracking-[0.16em] text-[#6b7280]">Username</span>
                     <input
                       value={profileForm.username}
                       onChange={(event) => setProfileForm((current) => ({ ...current, username: event.target.value }))}
                       required
-                      className="w-full rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-sm text-slate-100 outline-none transition-all duration-200 focus:border-cyan-400/40 focus:bg-slate-950"
+                      className="w-full rounded-2xl border border-black/10 bg-[#f6f7f3] px-4 py-3 text-sm text-[#111827] outline-none transition-all duration-200 focus:border-[#0f6b3d]/40 focus:bg-white"
                     />
                   </label>
                   <label className="block space-y-2">
-                    <span className="text-xs uppercase tracking-[0.24em] text-slate-500">Full Name</span>
+                    <span className="text-xs uppercase tracking-[0.16em] text-[#6b7280]">Full Name</span>
                     <input
                       value={profileForm.fullName}
                       onChange={(event) => setProfileForm((current) => ({ ...current, fullName: event.target.value }))}
                       required
-                      className="w-full rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-sm text-slate-100 outline-none transition-all duration-200 focus:border-cyan-400/40 focus:bg-slate-950"
+                      className="w-full rounded-2xl border border-black/10 bg-[#f6f7f3] px-4 py-3 text-sm text-[#111827] outline-none transition-all duration-200 focus:border-[#0f6b3d]/40 focus:bg-white"
                     />
                   </label>
                   <label className="block space-y-2">
-                    <span className="text-xs uppercase tracking-[0.24em] text-slate-500">Email</span>
+                    <span className="text-xs uppercase tracking-[0.16em] text-[#6b7280]">Email</span>
                     <input
                       value={user?.email || ''}
                       readOnly
                       disabled
-                      className="w-full rounded-2xl border border-slate-800 bg-slate-950/40 px-4 py-3 text-sm text-slate-500 outline-none"
+                      className="w-full rounded-2xl border border-black/10 bg-[#eef2ed] px-4 py-3 text-sm text-[#7b817c] outline-none"
                     />
                   </label>
                   <div className="flex items-center justify-end gap-3 pt-2">
                     <button
                       type="button"
                       onClick={() => setProfileModalOpen(false)}
-                      className="rounded-2xl border border-slate-700/80 px-4 py-3 text-sm uppercase tracking-[0.2em] text-slate-400 transition-all duration-200 hover:border-slate-500 hover:text-slate-100"
+                      className="rounded-2xl border border-black/10 px-4 py-3 text-sm uppercase tracking-[0.14em] text-[#6b7280] transition-all duration-200 hover:bg-[#f3f5f1] hover:text-[#111827]"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
                       disabled={profileSaving}
-                      className="rounded-2xl border border-cyan-300/40 bg-[linear-gradient(135deg,rgba(0,212,255,0.18),rgba(123,97,255,0.25))] px-5 py-3 text-sm uppercase tracking-[0.24em] text-cyan-50 transition-all duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="rounded-2xl bg-[#0f6b3d] px-5 py-3 text-sm uppercase tracking-[0.14em] text-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#0b5a33] disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {profileSaving ? 'Saving...' : 'Save Profile'}
                     </button>
@@ -649,13 +709,13 @@ function InstancesScreen({
   onDelete,
 }) {
   return (
-    <section className="flex-1 px-5 py-5 md:px-8 md:py-7">
-      <div className="rounded-[32px] border border-[color:var(--border)] bg-[rgba(4,10,20,0.58)] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)] backdrop-blur-sm md:p-7">
-        <div className="flex flex-col gap-5 border-b border-[color:var(--border)] pb-6 md:flex-row md:items-center md:justify-between">
+    <section className="px-5 py-5 md:px-8 md:py-7">
+      <div className="rounded-[32px] bg-white p-6 shadow-[0_18px_55px_rgba(15,23,42,0.06)] md:p-8">
+        <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-xs uppercase tracking-[0.4em] text-cyan-300/70">Fleet Overview</p>
-            <h2 className="mt-3 text-3xl text-slate-50">Instances</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-400">
+            <p className="text-sm text-[#7b817c]">Fleet Overview</p>
+            <h2 className="mt-2 text-5xl font-semibold text-[#111827]">Instances</h2>
+            <p className="mt-3 max-w-3xl text-base leading-7 text-[#7b817c]">
               Registry-backed AWS monitoring for {user?.fullName || user?.username || 'your account'}. Every card below reflects the real backend `InstanceEntity` plus Prometheus metrics when the target is UP.
             </p>
           </div>
@@ -663,21 +723,20 @@ function InstancesScreen({
           <button
             type="button"
             onClick={onCreate}
-            className="group relative overflow-hidden rounded-2xl border border-cyan-300/40 bg-[linear-gradient(135deg,rgba(0,212,255,0.14),rgba(123,97,255,0.22))] px-5 py-3 text-sm uppercase tracking-[0.24em] text-cyan-50 shadow-[0_0_35px_rgba(0,212,255,0.12)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_45px_rgba(0,212,255,0.18)]"
+            className="rounded-full bg-[#0f6b3d] px-7 py-4 text-base font-medium text-white shadow-[0_16px_36px_rgba(15,107,61,0.18)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#0b5a33]"
           >
-            <span className="pointer-events-none absolute inset-y-0 left-0 w-24 -translate-x-[130%] bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.35),transparent)] transition-transform duration-700 group-hover:[animation:shimmerSweep_1s_linear]" />
             Register Instance
           </button>
         </div>
 
         {loading ? (
-          <div className="flex min-h-[320px] items-center justify-center rounded-[28px] border border-slate-800/80 bg-slate-950/35 text-sm uppercase tracking-[0.24em] text-slate-500">
+          <div className="mt-7 flex min-h-[320px] items-center justify-center rounded-[28px] bg-[#f6f7f3] text-sm uppercase tracking-[0.16em] text-[#7b817c]">
             Loading registry targets...
           </div>
         ) : instances.length === 0 ? (
-          <div className="mt-7 rounded-[28px] border border-dashed border-slate-700 bg-slate-950/30 p-10 text-center">
-            <p className="text-lg text-slate-200">No instances registered yet.</p>
-            <p className="mt-3 text-sm leading-7 text-slate-500">
+          <div className="mt-7 rounded-[28px] border border-dashed border-black/10 bg-[#f6f7f3] p-10 text-center">
+            <p className="text-lg text-[#111827]">No instances registered yet.</p>
+            <p className="mt-3 text-sm leading-7 text-[#7b817c]">
               Open the register flow to add an EC2 instance ID, region, and monitor role ARN from the backend contract.
             </p>
           </div>
@@ -693,7 +752,7 @@ function InstancesScreen({
                 <article
                   key={instance.id}
                   onClick={() => onSelectInstance(instance.id)}
-                  className={`group relative overflow-hidden rounded-[28px] border bg-[linear-gradient(180deg,rgba(10,22,40,0.95),rgba(6,14,28,0.92))] p-5 transition-all duration-200 hover:-translate-y-1 hover:border-cyan-400/30 hover:shadow-[0_18px_60px_rgba(0,212,255,0.12)] ${instance.state === 'UP' ? 'border-cyan-400/25 shadow-[0_0_0_1px_rgba(0,212,255,0.08),0_0_42px_rgba(0,212,255,0.12)] [animation:hoverPulse_3.2s_ease-in-out_infinite]' : 'border-[color:var(--border)]'}`}
+                  className={`group relative overflow-hidden rounded-[28px] border p-6 text-[#111827] transition-all duration-200 hover:-translate-y-1 hover:shadow-[0_18px_45px_rgba(15,23,42,0.08)] ${instance.state === 'UP' ? 'border-[#0f6b3d]/20 bg-[#f2f7f0]' : 'border-transparent bg-[#f7f8f4]'}`}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(event) => {
@@ -703,19 +762,17 @@ function InstancesScreen({
                     }
                   }}
                 >
-                  <div className="absolute inset-x-8 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(0,212,255,0.92),transparent)]" />
-                  {instance.state === 'UP' && <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(0,212,255,0.11),transparent_45%)]" />}
                   {selectedInstance?.id === instance.id && (
-                    <div className="pointer-events-none absolute inset-0 rounded-[28px] ring-1 ring-cyan-300/80 ring-offset-2 ring-offset-[#020510]" />
+                    <div className="pointer-events-none absolute inset-0 rounded-[28px] ring-2 ring-[#0f6b3d]/25 ring-offset-2 ring-offset-white" />
                   )}
 
                   <div className="relative flex items-start justify-between gap-4">
                     <div>
-                      <p className="text-xs uppercase tracking-[0.3em] text-slate-500">{instance.region}</p>
-                      <h3 className="mt-3 text-xl text-slate-50">{instance.nickname || instance.instanceId}</h3>
-                      <p className="mt-2 text-xs uppercase tracking-[0.2em] text-slate-600">{instance.instanceId}</p>
+                      <p className="text-sm text-[#7b817c]">{instance.region}</p>
+                      <h3 className="mt-3 text-2xl font-semibold text-[#111827]">{instance.nickname || instance.instanceId}</h3>
+                      <p className="mt-2 text-xs text-[#7b817c]">{instance.instanceId}</p>
                     </div>
-                    <span className="rounded-full border border-cyan-400/25 bg-cyan-400/10 px-3 py-1 text-[11px] uppercase tracking-[0.24em] text-cyan-100">
+                    <span className="rounded-full bg-white px-3 py-1 text-[11px] font-medium text-[#0f6b3d] shadow-sm">
                       {instance.externalId ? `EXT ${instance.externalId.slice(0, 8)}` : 'Pending'}
                     </span>
                   </div>
@@ -726,9 +783,9 @@ function InstancesScreen({
                         <span className={`absolute inline-flex h-full w-full rounded-full ${tone.ring} ${instance.state === 'UP' ? '[animation:pulseRing_2s_ease-out_infinite]' : ''}`} />
                         <span className={`relative h-2.5 w-2.5 rounded-full ${tone.dot}`} />
                       </span>
-                      <span className={`text-xs uppercase tracking-[0.3em] ${tone.text}`}>{instance.state}</span>
+                      <span className={`text-xs uppercase tracking-[0.18em] ${tone.text}`}>{instance.state}</span>
                     </div>
-                    <p className="text-xs text-slate-500">{formatLastSeen(instance)}</p>
+                    <p className="text-xs text-[#7b817c]">{formatLastSeen(instance)}</p>
                   </div>
 
                   <div className="mt-6 space-y-4">
@@ -736,7 +793,7 @@ function InstancesScreen({
                     <MetricBar label="Memory" value={memory} tone="violet" />
                   </div>
 
-                  <div className="mt-6 grid grid-cols-2 gap-3 text-xs text-slate-500">
+                  <div className="mt-6 grid grid-cols-2 gap-3 text-xs">
                     <InfoPill label="Quarantine" value={`${instance.quarantineDurationMinutes || 0} min`} />
                     <InfoPill label="Strikes" value={`${instance.suspectCount}/${instance.maxSuspectStrikes || 0}`} />
                     <InfoPill label="Cycles" value={`${instance.quarantineCount}/${instance.maxQuarantineCycles || 0}`} />
@@ -750,7 +807,7 @@ function InstancesScreen({
                         event.stopPropagation();
                         onOpenChat(instance.id);
                       }}
-                      className="rounded-2xl border border-cyan-400/30 bg-cyan-400/10 px-3 py-3 text-[11px] uppercase tracking-[0.24em] text-cyan-100 transition-all duration-200 hover:border-cyan-300/60 hover:bg-cyan-400/16"
+                      className="rounded-2xl bg-[#0f6b3d] px-3 py-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-white transition-all duration-200 hover:bg-[#0b5a33]"
                     >
                       Open Chat
                     </button>
@@ -761,7 +818,7 @@ function InstancesScreen({
                         onReset(instance.id);
                       }}
                       disabled={actionInstanceId === instance.id}
-                      className="rounded-2xl border border-amber-400/25 bg-amber-400/10 px-3 py-3 text-[11px] uppercase tracking-[0.24em] text-amber-100 transition-all duration-200 hover:border-amber-300/55 hover:bg-amber-400/16 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="rounded-2xl bg-white px-3 py-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#8a5a00] transition-all duration-200 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       Reset
                     </button>
@@ -772,7 +829,7 @@ function InstancesScreen({
                         onDelete(instance.id);
                       }}
                       disabled={actionInstanceId === instance.id}
-                      className="rounded-2xl border border-rose-400/25 bg-rose-400/10 px-3 py-3 text-[11px] uppercase tracking-[0.24em] text-rose-100 transition-all duration-200 hover:border-rose-300/55 hover:bg-rose-400/16 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="rounded-2xl bg-white px-3 py-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#6b7280] transition-all duration-200 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       Remove
                     </button>
@@ -792,6 +849,9 @@ function InstancesScreen({
 }
 
 function GrafanaMetricsSection({ instance, metrics }) {
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [lastRefresh, setLastRefresh] = useState(new Date());
+
   const grafanaConfigured = Boolean(
     GRAFANA_HOST &&
     DASHBOARD_UID &&
@@ -805,82 +865,194 @@ function GrafanaMetricsSection({ instance, metrics }) {
     ? `${GRAFANA_HOST}/d/${DASHBOARD_UID}/dashboard?orgId=1&var-instance=${encodeURIComponent(instance.instanceId)}`
     : null;
 
+  const refreshPanels = () => {
+    setRefreshKey((current) => current + 1);
+    setLastRefresh(new Date());
+  };
+
+  const metricHighlights = [
+    {
+      label: 'CPU Load',
+      value: `${parseMetric(metrics?.cpu)}%`,
+      detail: 'Node exporter',
+      tone: 'from-[#0f6b3d] to-[#10291d] text-white',
+      bars: [28, 46, 35, 62, 44, 72, 52],
+    },
+    {
+      label: 'Memory',
+      value: `${parseMetric(metrics?.memory)}%`,
+      detail: 'Working set',
+      tone: 'from-[#ecf7ef] to-white text-[#0f2f1f]',
+      bars: [38, 34, 48, 45, 59, 54, 63],
+    },
+    {
+      label: 'Disk',
+      value: `${parseMetric(metrics?.disk)}%`,
+      detail: 'Root volume',
+      tone: 'from-[#fff8e8] to-white text-[#3b2a05]',
+      bars: [24, 26, 25, 31, 29, 33, 34],
+    },
+  ];
+
   return (
-    <div className="mt-7 rounded-[28px] border border-[color:var(--border)] bg-[linear-gradient(180deg,rgba(8,18,34,0.96),rgba(4,12,22,0.94))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
-      <div className="flex flex-col gap-4 border-b border-[color:var(--border)] pb-5 md:flex-row md:items-center md:justify-between">
-        <div>
-          <p className="text-xs uppercase tracking-[0.35em] text-cyan-300/70">Grafana Metrics</p>
-          <h3 className="mt-3 text-xl text-slate-50">{instance.nickname || instance.instanceId}</h3>
-          <p className="mt-2 text-sm leading-7 text-slate-500">
-            Live Grafana panels for `{instance.instanceId}` load as soon as this instance is selected.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <InfoPill label="CPU" value={`${parseMetric(metrics?.cpu)}%`} />
-          <InfoPill label="Memory" value={`${parseMetric(metrics?.memory)}%`} />
-          {openUrl && (
-            <a
-              href={openUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-2xl border border-cyan-300/40 bg-cyan-400/10 px-4 py-3 text-xs uppercase tracking-[0.22em] text-cyan-100 transition-all duration-200 hover:border-cyan-300/70 hover:bg-cyan-400/18"
+    <div className="mt-7 overflow-hidden rounded-[38px] bg-[#edf2eb] p-3 shadow-[0_26px_80px_rgba(15,23,42,0.08)] md:p-5">
+      <div className="relative overflow-hidden rounded-[34px] bg-[#0f2017] px-5 py-6 text-white md:px-7 md:py-7">
+        <div className="absolute -right-20 -top-24 h-72 w-72 rounded-full bg-[#33b875]/25 blur-3xl" />
+        <div className="absolute bottom-0 left-0 h-32 w-full bg-[radial-gradient(circle_at_20%_100%,rgba(111,207,151,0.28),transparent_34%),linear-gradient(90deg,rgba(255,255,255,0.05)_1px,transparent_1px)] bg-[length:auto,28px_28px]" />
+
+        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-3xl">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="rounded-full bg-white/10 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-100">
+                Observability
+              </span>
+              <span className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-[11px] uppercase tracking-[0.16em] text-white/70">
+                {instance.region || 'region unknown'}
+              </span>
+            </div>
+            <h3 className="mt-5 text-4xl font-semibold tracking-[-0.04em] text-white md:text-5xl">Grafana command view</h3>
+            <p className="mt-3 max-w-2xl text-sm leading-7 text-white/68">
+              Live Prometheus panels for <span className="font-semibold text-white">{instance.nickname || instance.instanceId}</span>. Refresh reloads every embedded panel without touching the rest of the dashboard.
+            </p>
+          </div>
+
+          <div className="relative flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={refreshPanels}
+              className="rounded-full bg-white px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-[#0f6b3d] shadow-[0_18px_40px_rgba(0,0,0,0.2)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-emerald-50"
             >
-              Open in Grafana
-            </a>
-          )}
+              Refresh Panels
+            </button>
+            {openUrl && (
+              <a
+                href={openUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-full border border-white/20 bg-white/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-white/15"
+              >
+                Open Grafana
+              </a>
+            )}
+          </div>
+        </div>
+
+        <div className="relative mt-7 grid gap-3 md:grid-cols-3">
+          {metricHighlights.map((metric) => (
+            <div key={metric.label} className={`overflow-hidden rounded-[28px] bg-gradient-to-br p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.22)] ${metric.tone}`}>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm opacity-70">{metric.label}</p>
+                  <p className="mt-2 text-4xl font-semibold tracking-[-0.05em]">{metric.value}</p>
+                </div>
+                <span className="rounded-full bg-black/10 px-3 py-1 text-[10px] uppercase tracking-[0.14em] opacity-75">
+                  Live
+                </span>
+              </div>
+              <div className="mt-5 flex h-12 items-end gap-1.5">
+                {metric.bars.map((height, index) => (
+                  <span
+                    key={`${metric.label}-${height}-${index}`}
+                    className="w-full rounded-t-full bg-current opacity-20"
+                    style={{ height: `${height}%` }}
+                  />
+                ))}
+              </div>
+              <p className="mt-3 text-xs uppercase tracking-[0.12em] opacity-60">{metric.detail}</p>
+            </div>
+          ))}
         </div>
       </div>
 
-      {!grafanaConfigured ? (
-        <div className="mt-5 rounded-[24px] border border-amber-400/20 bg-amber-400/10 px-5 py-4 text-sm text-amber-100">
-          Grafana environment variables are incomplete. Add `REACT_APP_GRAFANA_URL`, `REACT_APP_GRAFANA_DASHBOARD_UID`, and panel IDs in `frontend/.env`.
+      <div className="mt-3 flex flex-col gap-5 rounded-[34px] bg-white p-5 md:p-6">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-sm font-medium text-[#111827]">Embedded telemetry panels</p>
+            <p className="mt-1 text-sm text-[#7b817c]">
+              Last refreshed {formatTimestamp(lastRefresh)} · instance variable `{instance.instanceId}`
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="flex items-center gap-2 rounded-full bg-[#eef2ed] px-4 py-2 text-xs uppercase tracking-[0.12em] text-[#0f6b3d]">
+              <span className="h-2 w-2 rounded-full bg-[#0f6b3d] shadow-[0_0_0_4px_rgba(15,107,61,0.12)]" />
+              Live embed
+            </span>
+            <span className="rounded-full bg-[#f7f8f4] px-4 py-2 text-xs uppercase tracking-[0.12em] text-[#7b817c]">
+              30m window
+            </span>
+          </div>
         </div>
-      ) : (
-        <div className="mt-5 grid gap-5 xl:grid-cols-2">
-          <GrafanaPanel title="CPU Usage" panelId={GRAFANA_PANELS.cpu} instanceId={instance.instanceId} height={220} />
-          <GrafanaPanel title="Memory Usage" panelId={GRAFANA_PANELS.memory} instanceId={instance.instanceId} height={220} />
-          <GrafanaPanel title="Disk Usage" panelId={GRAFANA_PANELS.disk} instanceId={instance.instanceId} height={200} />
-          <GrafanaPanel title="Network Traffic" panelId={GRAFANA_PANELS.network} instanceId={instance.instanceId} height={200} />
-        </div>
-      )}
+
+        {!grafanaConfigured ? (
+          <div className="rounded-[28px] border border-amber-200 bg-amber-50 px-5 py-4 text-sm leading-7 text-amber-800">
+            Grafana environment variables are incomplete. Add `REACT_APP_GRAFANA_URL`, `REACT_APP_GRAFANA_DASHBOARD_UID`, and panel IDs in `frontend/.env`.
+          </div>
+        ) : (
+          <div className="grid gap-5 xl:grid-cols-2">
+            <GrafanaPanel key={`cpu-${refreshKey}`} title="CPU Usage" panelId={GRAFANA_PANELS.cpu} instanceId={instance.instanceId} height={236} accent="emerald" />
+            <GrafanaPanel key={`memory-${refreshKey}`} title="Memory Usage" panelId={GRAFANA_PANELS.memory} instanceId={instance.instanceId} height={236} accent="blue" />
+            <GrafanaPanel key={`disk-${refreshKey}`} title="Disk Usage" panelId={GRAFANA_PANELS.disk} instanceId={instance.instanceId} height={216} accent="amber" />
+            <GrafanaPanel key={`network-${refreshKey}`} title="Network Traffic" panelId={GRAFANA_PANELS.network} instanceId={instance.instanceId} height={216} accent="violet" />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-function GrafanaPanel({ title, panelId, instanceId, height }) {
+function GrafanaPanel({ title, panelId, instanceId, height, accent = 'emerald' }) {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
 
   const url = `${GRAFANA_HOST}/d-solo/${DASHBOARD_UID}/dashboard?orgId=1&from=now-30m&to=now&panelId=${panelId}&var-instance=${encodeURIComponent(instanceId)}&theme=dark&refresh=15s`;
+  const accentClass = {
+    emerald: 'from-emerald-400/55 to-emerald-400/0',
+    blue: 'from-sky-400/55 to-sky-400/0',
+    amber: 'from-amber-300/60 to-amber-300/0',
+    violet: 'from-violet-400/55 to-violet-400/0',
+  }[accent] || 'from-emerald-400/55 to-emerald-400/0';
 
   return (
-    <div className="rounded-[24px] border border-slate-800 bg-slate-950/45 p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <p className="text-xs uppercase tracking-[0.22em] text-slate-500">{title}</p>
-        <span className="text-[11px] uppercase tracking-[0.18em] text-slate-600">{loaded ? 'Live' : 'Loading'}</span>
-      </div>
-      <div className="relative overflow-hidden rounded-2xl border border-slate-800 bg-[#020510]" style={{ height }}>
-        {!loaded && !error && (
-          <div className="absolute inset-0 flex items-center justify-center text-xs uppercase tracking-[0.18em] text-slate-500">
-            Loading Grafana panel...
+    <div className="group overflow-hidden rounded-[30px] border border-black/5 bg-[#f4f6f1] p-2 shadow-[0_18px_38px_rgba(15,23,42,0.08)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_24px_50px_rgba(15,23,42,0.11)]">
+      <div className="relative overflow-hidden rounded-[26px] bg-[#101418] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.07)]">
+        <div className={`pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r ${accentClass}`} />
+        <div className="mb-3 flex items-center justify-between gap-4 px-1">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
+              <span className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
+              <span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
+            </div>
+            <p className="mt-3 truncate text-sm font-medium text-white">{title}</p>
+            <p className="mt-1 text-[11px] uppercase tracking-[0.14em] text-white/45">Grafana · panel {panelId}</p>
           </div>
-        )}
-        {error && (
-          <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-xs uppercase tracking-[0.18em] text-rose-300">
-            Grafana panel failed to load. Check embed permissions and dashboard variables.
-          </div>
-        )}
-        <iframe
-          title={title}
-          src={url}
-          width="100%"
-          height={height}
-          frameBorder="0"
-          className={loaded && !error ? 'block w-full rounded-2xl' : 'hidden'}
-          onLoad={() => setLoaded(true)}
-          onError={() => setError(true)}
-          sandbox="allow-scripts allow-same-origin allow-popups"
-        />
+          <span className={`shrink-0 rounded-full px-3 py-1 text-[10px] uppercase tracking-[0.12em] ${loaded ? 'bg-emerald-400/15 text-emerald-200' : 'bg-white/10 text-white/60'}`}>
+            {loaded ? 'Live' : 'Loading'}
+          </span>
+        </div>
+        <div className="relative overflow-hidden rounded-[22px] border border-white/10 bg-[#171b20]" style={{ height }}>
+          {!loaded && !error && (
+            <div className="absolute inset-0 flex items-center justify-center bg-[linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[length:28px_28px] text-xs uppercase tracking-[0.14em] text-white/45">
+              Loading Grafana panel...
+            </div>
+          )}
+          {error && (
+            <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-xs uppercase tracking-[0.18em] text-rose-300">
+              Grafana panel failed to load. Check embed permissions and dashboard variables.
+            </div>
+          )}
+          <iframe
+            title={title}
+            src={url}
+            width="100%"
+            height={height}
+            frameBorder="0"
+            className={loaded && !error ? 'block w-full rounded-2xl' : 'hidden'}
+            onLoad={() => setLoaded(true)}
+            onError={() => setError(true)}
+            sandbox="allow-scripts allow-same-origin allow-popups"
+          />
+        </div>
       </div>
     </div>
   );
@@ -892,27 +1064,44 @@ function ChatScreen({
   selectedMetrics,
   selectedMessages,
   snapshots,
+  selectedSnapshot,
+  selectedSnapshotId,
+  snapshotsLoading,
+  snapshotSyncedAt,
   draftMessage,
   onDraftChange,
   onSelectInstance,
+  onSelectSnapshot,
+  onRefreshSnapshots,
   onSend,
   isTyping,
-  endOfMessagesRef,
+  analysisLoading,
+  chatScrollRef,
   tokenEstimate,
 }) {
-  const latestSnapshot = snapshots[0] ?? null;
+  const selectedTone = getStateTone(selectedInstance?.state);
+  const timelineCount = parseTimeline(selectedSnapshot?.metricsTimeline).length;
 
   return (
-    <section className="flex min-h-screen flex-1 flex-col px-5 py-5 md:px-8 md:py-7">
-      <div className="flex flex-1 overflow-hidden rounded-[32px] border border-[color:var(--border)] bg-[rgba(4,10,20,0.6)] shadow-[inset_0_1px_0_rgba(255,255,255,0.02)] backdrop-blur-sm">
-        <div className="hidden w-80 shrink-0 border-r border-[color:var(--border)] bg-[linear-gradient(180deg,rgba(10,22,40,0.92),rgba(4,12,24,0.88))] lg:flex lg:flex-col">
-          <div className="border-b border-[color:var(--border)] px-5 py-5">
-            <p className="text-xs uppercase tracking-[0.35em] text-cyan-300/70">Registered Targets</p>
-            <h2 className="mt-3 text-xl text-slate-50">Chat</h2>
-            <p className="mt-2 text-sm leading-7 text-slate-500">AI context is derived from the real snapshot and metric endpoints in the backend.</p>
+    <section className="px-5 py-5 md:px-8 md:py-7">
+      <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+        <aside className="min-h-0 overflow-hidden rounded-[32px] bg-white shadow-[0_18px_55px_rgba(15,23,42,0.06)]">
+          <div className="border-b border-black/5 px-5 py-5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm text-[#7b817c]">Targets</p>
+                <h2 className="mt-2 text-2xl font-semibold text-[#111827]">Incident Chat</h2>
+              </div>
+              <span className="rounded-full bg-[#eef2ed] px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-[#0f6b3d]">
+                {instances.length} live
+              </span>
+            </div>
+            <p className="mt-3 text-sm leading-6 text-[#7b817c]">
+              Pick an instance, then choose the exact lifecycle snapshot you want the AI to analyse.
+            </p>
           </div>
 
-          <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
+          <div className="max-h-[34vh] space-y-2 overflow-y-auto px-4 py-4 xl:max-h-[calc(100vh-190px)]">
             {instances.map((instance) => {
               const tone = getStateTone(instance.state);
               const active = selectedInstance?.id === instance.id;
@@ -921,70 +1110,114 @@ function ChatScreen({
                   key={instance.id}
                   type="button"
                   onClick={() => onSelectInstance(instance.id)}
-                  className={`w-full rounded-[24px] border px-4 py-4 text-left transition-all duration-200 ${active ? 'border-cyan-400/30 bg-cyan-400/10 shadow-[0_0_24px_rgba(0,212,255,0.12)]' : 'border-slate-800/90 bg-slate-950/35 hover:border-slate-700 hover:bg-slate-900/55'}`}
+                  className={`w-full rounded-2xl px-4 py-3 text-left transition-all duration-200 ${active ? 'bg-[#0f6b3d] text-white shadow-[0_14px_28px_rgba(15,107,61,0.16)]' : 'bg-[#f7f8f4] text-[#111827] hover:bg-[#eef2ed]'}`}
                 >
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-sm text-slate-100">{instance.nickname || instance.instanceId}</p>
-                      <p className="mt-1 text-xs uppercase tracking-[0.22em] text-slate-500">{instance.instanceId}</p>
+                      <p className={active ? 'text-sm text-white' : 'text-sm text-[#111827]'}>{instance.nickname || instance.instanceId}</p>
+                      <p className={active ? 'mt-1 text-xs text-white/60' : 'mt-1 text-xs text-[#7b817c]'}>{instance.instanceId}</p>
                     </div>
-                    <span className={`mt-1 h-2.5 w-2.5 rounded-full ${tone.dot} shadow-[0_0_12px_currentColor]`} />
+                    <span className={`h-2.5 w-2.5 rounded-full ${tone.dot} shadow-[0_0_12px_currentColor]`} />
                   </div>
                   <div className="mt-3 flex items-center justify-between text-[11px] uppercase tracking-[0.18em]">
-                    <span className={tone.text}>{instance.state}</span>
-                    <span className="text-slate-600">{instance.region}</span>
+                    <span className={active ? 'text-white' : tone.text}>{instance.state}</span>
+                    <span className={active ? 'text-white/60' : 'text-[#7b817c]'}>{instance.region}</span>
                   </div>
                 </button>
               );
             })}
           </div>
-        </div>
+        </aside>
 
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="border-b border-[color:var(--border)] px-5 py-5 md:px-7">
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="grid min-h-0 gap-4 xl:grid-rows-[auto_minmax(0,1fr)_auto]">
+          <div className="rounded-[32px] bg-white p-6 shadow-[0_18px_55px_rgba(15,23,42,0.06)]">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.35em] text-cyan-300/70">Context Channel</p>
-                <div className="mt-3 flex items-center gap-3">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-cyan-400/30 bg-[linear-gradient(135deg,rgba(0,212,255,0.16),rgba(123,97,255,0.16))]">
-                    <OrbIcon className="h-5 w-5 text-cyan-100" />
-                  </div>
-                  <div>
-                    <h3 className="text-xl text-slate-50">{selectedInstance?.nickname || selectedInstance?.instanceId || 'No instance selected'}</h3>
-                    <p className="mt-1 text-sm text-slate-500">{selectedInstance?.instanceId || 'Waiting for registry data'} · {selectedInstance?.state || 'OFFLINE'}</p>
-                  </div>
+                <p className="text-sm text-[#7b817c]">Analysis Workspace</p>
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <h3 className="text-4xl font-semibold text-[#111827]">{selectedInstance?.nickname || selectedInstance?.instanceId || 'No instance selected'}</h3>
+                  <span className={`rounded-full bg-[#eef2ed] px-3 py-1 text-[11px] uppercase tracking-[0.14em] ${selectedTone.text}`}>
+                    {selectedInstance?.state || 'Offline'}
+                  </span>
                 </div>
+                <p className="mt-2 text-sm text-[#7b817c]">
+                  {selectedInstance?.instanceId || 'Waiting for registry data'} {selectedInstance?.region ? `· ${selectedInstance.region}` : ''}
+                </p>
               </div>
-              <div className="grid gap-3 text-sm text-slate-500 sm:grid-cols-3">
+
+              <div className="grid min-w-full gap-3 text-sm text-[#7b817c] sm:grid-cols-3 lg:min-w-[420px]">
                 <StatPill label="CPU" value={`${parseMetric(selectedMetrics?.cpu)}%`} />
                 <StatPill label="Memory" value={`${parseMetric(selectedMetrics?.memory)}%`} />
                 <StatPill label="Snapshots" value={`${snapshots.length}`} />
               </div>
             </div>
-          </div>
 
-          <div className="grid border-b border-[color:var(--border)] px-4 py-4 md:grid-cols-[1.3fr_0.9fr] md:px-7">
-            <div className="pr-0 md:pr-5">
-              <p className="text-xs uppercase tracking-[0.24em] text-slate-600">Latest Analysis</p>
-              <p className="mt-3 text-sm leading-7 text-slate-300">
-                {latestSnapshot?.aiAnalysis || latestSnapshot?.aiContext || 'No AI analysis is available yet for this instance. Once the backend stores a snapshot, it will appear here automatically.'}
-              </p>
-            </div>
-            <div className="mt-4 border-t border-slate-800 pt-4 md:mt-0 md:border-l md:border-t-0 md:pl-5 md:pt-0">
-              <p className="text-xs uppercase tracking-[0.24em] text-slate-600">Latest Snapshot</p>
-              <div className="mt-3 space-y-3 text-sm text-slate-400">
-                <InlineStat label="Captured" value={formatTimestamp(latestSnapshot?.snapshotTime)} />
-                <InlineStat label="Error Type" value={latestSnapshot?.errorType || 'None'} />
-                <InlineStat label="Grafana" value={latestSnapshot?.grafanaSnapshotUrl ? 'Available' : 'N/A'} />
+            <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(300px,0.85fr)]">
+              <div className="rounded-3xl bg-[#f7f8f4] p-4">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-[#111827]">Lifecycle snapshots</p>
+                    <p className="mt-1 text-sm text-[#7b817c]">{snapshotsLoading ? 'Syncing latest incidents...' : `Last sync ${formatTimestamp(snapshotSyncedAt)}`}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onRefreshSnapshots}
+                    disabled={snapshotsLoading}
+                    className="rounded-full bg-white px-4 py-2 text-xs font-medium text-[#0f6b3d] shadow-sm transition-all duration-200 hover:bg-[#eef2ed] disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {snapshotsLoading ? 'Syncing' : 'Refresh'}
+                  </button>
+                </div>
+
+                <div className="grid max-h-56 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                  {snapshots.length === 0 ? (
+                    <div className="col-span-full rounded-2xl border border-dashed border-black/10 bg-white px-4 py-6 text-center text-sm text-[#7b817c]">
+                      No closed lifecycle snapshots yet. New incidents will appear here after the backend saves them.
+                    </div>
+                  ) : (
+                    snapshots.map((snapshot) => (
+                      <SnapshotOption
+                        key={snapshot.id}
+                        snapshot={snapshot}
+                        active={String(snapshot.id) === String(selectedSnapshotId)}
+                        onSelect={() => onSelectSnapshot(snapshot.id)}
+                      />
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-3xl bg-[#f7f8f4] p-4">
+                <p className="text-sm font-medium text-[#111827]">Selected snapshot</p>
+                <div className="mt-4 space-y-3">
+                  <InlineStat label="Snapshot" value={selectedSnapshot ? `#${selectedSnapshot.id}` : 'None'} />
+                  <InlineStat label="Started" value={formatTimestamp(selectedSnapshot?.incidentStartTime)} />
+                  <InlineStat label="Ended" value={formatTimestamp(selectedSnapshot?.incidentEndTime)} />
+                  <InlineStat label="Resolution" value={selectedSnapshot?.resolution || 'Open'} />
+                  <InlineStat label="Intervals" value={`${timelineCount}`} />
+                  <InlineStat label="Stored AI" value={selectedSnapshot?.aiAnalysis ? 'Available' : 'Not generated'} />
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-7">
-            <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
+          <div className="min-h-0 overflow-hidden rounded-[32px] bg-white shadow-[0_18px_55px_rgba(15,23,42,0.06)]">
+            <div className="flex h-full min-h-[360px] flex-col">
+              <div className="flex items-center justify-between border-b border-black/5 px-5 py-4">
+                <div>
+                  <p className="text-sm font-medium text-[#111827]">Conversation</p>
+                  <p className="mt-1 text-sm text-[#7b817c]">{analysisLoading ? 'Sentinal AI is analysing the selected snapshot...' : 'Analysis starts only when you press Send.'}</p>
+                </div>
+                <span className={`rounded-full px-3 py-1 text-[10px] uppercase tracking-[0.14em] ${analysisLoading ? 'bg-[#0f6b3d] text-white' : 'bg-[#eef2ed] text-[#7b817c]'}`}>
+                  {analysisLoading ? 'Running' : 'Idle'}
+                </span>
+              </div>
+
+              <div ref={chatScrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-7">
+                <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
               {selectedMessages.length === 0 && (
-                <div className="rounded-[24px] border border-dashed border-slate-700 bg-slate-950/30 px-5 py-8 text-center text-sm leading-7 text-slate-500">
-                  No snapshot conversation yet. The backend has not returned AI context for this instance.
+                <div className="rounded-3xl border border-dashed border-black/10 bg-[#f7f8f4] px-5 py-8 text-center text-sm leading-7 text-[#7b817c]">
+                  Choose a snapshot and send the default task to generate the first AI analysis.
                 </div>
               )}
 
@@ -992,13 +1225,13 @@ function ChatScreen({
                 <div key={message.id} className={`group flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div className={`flex max-w-3xl items-end gap-3 ${message.sender === 'user' ? 'flex-row-reverse' : ''}`}>
                     {message.sender === 'ai' && (
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-cyan-400/30 bg-[linear-gradient(135deg,rgba(0,212,255,0.16),rgba(123,97,255,0.18))] shadow-[0_0_24px_rgba(0,212,255,0.1)]">
-                        <OrbIcon className="h-4 w-4 text-cyan-100" />
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#eef2ed]">
+                        <OrbIcon className="h-4 w-4 text-[#0f6b3d]" />
                       </div>
                     )}
-                    <div className={`relative rounded-[24px] border px-4 py-4 text-sm leading-7 transition-all duration-200 ${message.sender === 'user' ? 'border-cyan-400/30 bg-[linear-gradient(135deg,rgba(0,212,255,0.16),rgba(123,97,255,0.16))] text-slate-50 shadow-[0_0_30px_rgba(0,212,255,0.08)]' : 'border-slate-800 bg-[rgba(10,22,40,0.88)] text-slate-200'}`}>
+                    <div className={`relative rounded-3xl px-4 py-4 text-sm leading-7 transition-all duration-200 ${message.sender === 'user' ? 'bg-[#0f6b3d] text-white' : 'bg-[#f7f8f4] text-[#111827]'}`}>
                       <span className="block whitespace-pre-wrap">{message.text}</span>
-                      <span className="pointer-events-none absolute -bottom-6 right-2 text-[11px] uppercase tracking-[0.22em] text-slate-500 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                      <span className="pointer-events-none absolute -bottom-6 right-2 text-[11px] uppercase tracking-[0.14em] text-[#7b817c] opacity-0 transition-opacity duration-200 group-hover:opacity-100">
                         {message.timestamp}
                       </span>
                     </div>
@@ -1009,15 +1242,15 @@ function ChatScreen({
               {isTyping && (
                 <div className="flex justify-start">
                   <div className="flex items-end gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-cyan-400/30 bg-[linear-gradient(135deg,rgba(0,212,255,0.16),rgba(123,97,255,0.18))]">
-                      <OrbIcon className="h-4 w-4 text-cyan-100" />
+                    <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#eef2ed]">
+                      <OrbIcon className="h-4 w-4 text-[#0f6b3d]" />
                     </div>
-                    <div className="rounded-[24px] border border-slate-800 bg-[rgba(10,22,40,0.88)] px-4 py-3">
+                    <div className="rounded-3xl bg-[#f7f8f4] px-4 py-3">
                       <div className="flex items-center gap-2">
                         {[0, 1, 2].map((dot) => (
                           <span
                             key={dot}
-                            className="h-2.5 w-2.5 rounded-full bg-cyan-300/85 [animation:typingDots_1.1s_ease-in-out_infinite]"
+                            className="h-2.5 w-2.5 rounded-full bg-[#0f6b3d] [animation:typingDots_1.1s_ease-in-out_infinite]"
                             style={{ animationDelay: `${dot * 0.16}s` }}
                           />
                         ))}
@@ -1027,42 +1260,26 @@ function ChatScreen({
                 </div>
               )}
 
-              <div ref={endOfMessagesRef} />
+                </div>
+              </div>
             </div>
           </div>
 
-          <div className="border-t border-[color:var(--border)] px-4 py-4 md:px-7">
-            <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 rounded-[28px] border border-slate-800 bg-[rgba(7,16,29,0.92)] p-4 shadow-[0_10px_40px_rgba(0,0,0,0.25)]">
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    className="rounded-2xl border border-slate-700/80 bg-slate-950/40 p-3 text-slate-400 transition-all duration-200 hover:border-cyan-400/35 hover:text-cyan-200"
-                    aria-label="Attach file"
-                  >
-                    <AttachIcon className="h-4 w-4" />
-                  </button>
-                  <select
-                    value={selectedInstance?.id || ''}
-                    onChange={(event) => onSelectInstance(event.target.value)}
-                    className="min-w-[260px] rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-sm text-slate-200 outline-none transition-all duration-200 focus:border-cyan-400/35"
-                  >
-                    {instances.map((instance) => (
-                      <option key={instance.id} value={instance.id}>
-                        {instance.nickname || instance.instanceId} · {instance.state}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="flex items-center gap-3 text-xs uppercase tracking-[0.18em] text-slate-500">
-                  <span>{tokenEstimate} est. tokens</span>
-                  <span className="h-1 w-1 rounded-full bg-slate-700" />
-                  <span>{selectedInstance?.state || 'OFFLINE'}</span>
-                </div>
+          <div className="rounded-[32px] bg-white p-5 shadow-[0_18px_55px_rgba(15,23,42,0.06)]">
+            <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="text-sm font-medium text-[#111827]">AI task</p>
+                <p className="mt-1 text-sm text-[#7b817c]">Use the default, pick a preset, or edit the instruction before sending.</p>
               </div>
+              <div className="flex flex-wrap gap-2">
+                {TASK_PRESETS.map((preset) => (
+                  <TaskPresetButton key={preset.label} preset={preset} onSelect={() => onDraftChange(preset.value)} />
+                ))}
+              </div>
+            </div>
 
-              <div className="flex items-end gap-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+              <div className="flex-1">
                 <textarea
                   value={draftMessage}
                   onChange={(event) => onDraftChange(event.target.value)}
@@ -1073,18 +1290,27 @@ function ChatScreen({
                     }
                   }}
                   rows={3}
-                  placeholder="Ask for a quick summary, request health context, or leave an operator note against the latest backend snapshot..."
-                  className="min-h-[104px] flex-1 resize-none rounded-[24px] border border-slate-800 bg-slate-950/55 px-4 py-4 text-sm leading-7 text-slate-100 outline-none transition-all duration-200 placeholder:text-slate-600 focus:border-cyan-400/35 focus:bg-slate-950/70"
+                  placeholder="Select an instance and lifecycle snapshot, then ask SentinelAI to analyse the incident timeline..."
+                  className="min-h-[112px] w-full resize-none rounded-3xl border border-black/10 bg-[#f7f8f4] px-4 py-4 text-sm leading-7 text-[#111827] outline-none transition-all duration-200 placeholder:text-[#9ca3af] focus:border-[#0f6b3d]/35 focus:bg-white"
                 />
+                <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] uppercase tracking-[0.14em] text-[#7b817c]">
+                  <span>{tokenEstimate} estimated tokens</span>
+                  <span className="h-1 w-1 rounded-full bg-slate-700" />
+                  <span>{selectedSnapshot ? `Snapshot #${selectedSnapshot.id}` : 'No snapshot selected'}</span>
+                </div>
+              </div>
+
                 <button
                   type="button"
                   onClick={onSend}
-                  className="group relative flex h-[104px] w-[104px] shrink-0 items-center justify-center overflow-hidden rounded-[24px] border border-cyan-300/35 bg-[linear-gradient(135deg,rgba(0,212,255,0.16),rgba(123,97,255,0.24))] text-cyan-50 shadow-[0_0_35px_rgba(0,212,255,0.12)] transition-all duration-200 hover:-translate-y-1 hover:shadow-[0_0_50px_rgba(0,212,255,0.2)]"
+                  disabled={!selectedSnapshot || analysisLoading}
+                  aria-label="Send analysis request"
+                  className="group relative flex h-14 shrink-0 items-center justify-center gap-3 overflow-hidden rounded-2xl bg-[#0f6b3d] px-7 text-sm font-medium uppercase tracking-[0.14em] text-white shadow-[0_16px_36px_rgba(15,107,61,0.18)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#0b5a33] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 lg:h-[112px]"
                 >
                   <span className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100 [animation:hoverPulse_1.4s_ease-in-out_infinite]" />
+                  <span className="relative">{analysisLoading ? 'Analysing' : 'Send'}</span>
                   <SendIcon className="relative h-6 w-6" />
                 </button>
-              </div>
             </div>
           </div>
         </div>
@@ -1093,20 +1319,56 @@ function ChatScreen({
   );
 }
 
+function TaskPresetButton({ preset, onSelect }) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className="rounded-full bg-[#eef2ed] px-3 py-2 text-[11px] font-medium uppercase tracking-[0.12em] text-[#0f6b3d] transition-all duration-200 hover:bg-[#dcebe0]"
+    >
+      {preset.label}
+    </button>
+  );
+}
+
+function SnapshotOption({ snapshot, active, onSelect }) {
+  const intervals = parseTimeline(snapshot.metricsTimeline).length;
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`rounded-2xl px-4 py-3 text-left transition-all duration-200 ${active ? 'bg-[#0f6b3d] text-white shadow-[0_14px_28px_rgba(15,107,61,0.16)]' : 'bg-white text-[#111827] hover:bg-[#eef2ed]'}`}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm">Snapshot #{snapshot.id}</span>
+        <span className={`rounded-full px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${snapshot.aiAnalysis ? 'bg-emerald-100 text-emerald-700' : active ? 'bg-white/20 text-white' : 'bg-[#eef2ed] text-[#7b817c]'}`}>
+          {snapshot.aiAnalysis ? 'Analysed' : 'Ready'}
+        </span>
+      </div>
+      <div className={`mt-3 grid grid-cols-2 gap-2 text-[11px] uppercase tracking-[0.12em] ${active ? 'text-white/70' : 'text-[#7b817c]'}`}>
+        <span>{snapshot.resolution || 'OPEN'}</span>
+        <span className="text-right">{intervals} intervals</span>
+      </div>
+      <p className={active ? 'mt-2 text-xs text-white/65' : 'mt-2 text-xs text-[#7b817c]'}>{formatTimestamp(snapshot.incidentStartTime)}</p>
+    </button>
+  );
+}
+
 function MetricBar({ label, value, tone }) {
   const fillClass = tone === 'cyan'
-    ? 'from-cyan-300 via-cyan-400 to-cyan-500'
-    : 'from-violet-300 via-violet-400 to-indigo-500';
+    ? 'from-[#7bc59a] via-[#0f6b3d] to-[#0b5a33]'
+    : 'from-[#c7d2fe] via-[#8b5cf6] to-[#6d28d9]';
 
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between text-[11px] uppercase tracking-[0.24em] text-slate-500">
+      <div className="mb-2 flex items-center justify-between text-[11px] uppercase tracking-[0.12em] text-[#7b817c]">
         <span>{label}</span>
-        <span className="text-slate-300">{value}%</span>
+        <span className="text-current">{value}%</span>
       </div>
-      <div className="h-2 overflow-hidden rounded-full bg-slate-900/80">
+      <div className="h-2 overflow-hidden rounded-full bg-black/10">
         <div
-          className={`h-full rounded-full bg-gradient-to-r ${fillClass} shadow-[0_0_16px_rgba(0,212,255,0.24)] transition-all duration-200`}
+          className={`h-full rounded-full bg-gradient-to-r ${fillClass} transition-all duration-200`}
           style={{ width: `${Math.max(0, Math.min(value, 100))}%` }}
         />
       </div>
@@ -1116,18 +1378,18 @@ function MetricBar({ label, value, tone }) {
 
 function InfoPill({ label, value }) {
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-950/45 px-4 py-3">
-      <p className="text-[11px] uppercase tracking-[0.18em] text-slate-600">{label}</p>
-      <p className="mt-2 text-sm text-slate-200">{value}</p>
+    <div className="rounded-2xl bg-white/70 px-4 py-3">
+      <p className="text-[11px] uppercase tracking-[0.12em] text-[#7b817c]">{label}</p>
+      <p className="mt-2 text-sm text-current">{value}</p>
     </div>
   );
 }
 
 function StatPill({ label, value }) {
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-950/45 px-4 py-3">
-      <p className="text-[11px] uppercase tracking-[0.18em] text-slate-600">{label}</p>
-      <p className="mt-2 text-sm text-slate-200">{value}</p>
+    <div className="rounded-2xl bg-[#f7f8f4] px-4 py-3">
+      <p className="text-[11px] uppercase tracking-[0.12em] text-[#7b817c]">{label}</p>
+      <p className="mt-2 text-sm font-medium text-[#111827]">{value}</p>
     </div>
   );
 }
@@ -1135,8 +1397,8 @@ function StatPill({ label, value }) {
 function InlineStat({ label, value }) {
   return (
     <div className="flex items-center justify-between gap-4">
-      <span className="text-xs uppercase tracking-[0.18em] text-slate-600">{label}</span>
-      <span className="text-right text-slate-300">{value}</span>
+      <span className="text-xs uppercase tracking-[0.12em] text-[#7b817c]">{label}</span>
+      <span className="text-right text-[#111827]">{value}</span>
     </div>
   );
 }
@@ -1147,25 +1409,25 @@ function getStateTone(state) {
       return {
         dot: 'bg-[color:var(--success)] text-[color:var(--success)]',
         ring: 'bg-[color:var(--success)]/30',
-        text: 'text-emerald-300',
+        text: 'text-emerald-700',
       };
     case 'SUSPECT':
       return {
         dot: 'bg-[color:var(--warning)] text-[color:var(--warning)]',
         ring: 'bg-[color:var(--warning)]/30',
-        text: 'text-amber-300',
+        text: 'text-amber-700',
       };
     case 'QUARANTINED':
       return {
         dot: 'bg-[color:var(--violet)] text-[color:var(--violet)]',
         ring: 'bg-[color:var(--violet)]/30',
-        text: 'text-violet-300',
+        text: 'text-violet-700',
       };
     default:
       return {
         dot: 'bg-[color:var(--danger)] text-[color:var(--danger)]',
         ring: 'bg-[color:var(--danger)]/30',
-        text: 'text-rose-300',
+        text: 'text-rose-700',
       };
   }
 }
@@ -1207,38 +1469,33 @@ function formatTimestamp(value) {
 }
 
 function buildSnapshotSummary(snapshot) {
-  const parts = [`Snapshot captured ${formatTimestamp(snapshot.snapshotTime)}.`];
+  const parts = [
+    `Lifecycle snapshot #${snapshot.id} started ${formatTimestamp(snapshot.incidentStartTime)} and ended ${formatTimestamp(snapshot.incidentEndTime)}.`,
+  ];
 
-  if (snapshot.errorType || snapshot.errorMessage) {
-    parts.push(`Error lane: ${snapshot.errorType || 'unknown'}${snapshot.errorMessage ? ` - ${snapshot.errorMessage}` : ''}.`);
+  if (snapshot.resolution) {
+    parts.push(`Resolution: ${snapshot.resolution}.`);
   }
 
-  if (typeof snapshot.cpuUsage === 'number' || typeof snapshot.memoryUsage === 'number') {
-    parts.push(`CPU ${snapshot.cpuUsage?.toFixed?.(1) ?? '0.0'}%, memory ${snapshot.memoryUsage?.toFixed?.(1) ?? '0.0'}%.`);
+  const timelineCount = parseTimeline(snapshot.metricsTimeline).length;
+  if (timelineCount > 0) {
+    parts.push(`${timelineCount} metric transition intervals are embedded in this snapshot.`);
   }
 
   return parts.join(' ');
 }
 
-function buildOperatorResponse(instance, metrics, snapshots, prompt) {
-  const lowerPrompt = prompt.toLowerCase();
-  const latestSnapshot = snapshots[0];
-
-  if (lowerPrompt.includes('error') || lowerPrompt.includes('incident')) {
-    return latestSnapshot?.errorMessage
-      ? `${instance.nickname || instance.instanceId} reports latest error context: ${latestSnapshot.errorMessage}`
-      : `${instance.nickname || instance.instanceId} has no stored error message in the latest snapshot.`;
+function parseTimeline(value) {
+  if (!value) {
+    return [];
   }
 
-  if (lowerPrompt.includes('health') || lowerPrompt.includes('status')) {
-    return `${instance.nickname || instance.instanceId} is currently ${instance.state}. CPU is ${parseMetric(metrics?.cpu)}%, memory is ${parseMetric(metrics?.memory)}%, and disk is ${parseMetric(metrics?.disk)}%.`;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
-
-  if (lowerPrompt.includes('summary') || lowerPrompt.includes('summarize')) {
-    return latestSnapshot?.aiAnalysis || latestSnapshot?.aiContext || 'There is no AI summary stored yet, so the best available signal is the live metrics panel and the instance monitor state.';
-  }
-
-  return `Local operator assistant composed a response from the current backend telemetry for ${instance.nickname || instance.instanceId}. For persisted chat, the backend will need a dedicated message endpoint beyond snapshots and metrics.`;
 }
 
 function getUserInitials(value) {
@@ -1310,14 +1567,6 @@ function OrbIcon({ className = 'h-5 w-5' }) {
     <svg viewBox="0 0 24 24" fill="none" className={className}>
       <circle cx="12" cy="12" r="8" fill="currentColor" fillOpacity="0.15" stroke="currentColor" strokeWidth="1.8" />
       <circle cx="12" cy="12" r="3" fill="currentColor" />
-    </svg>
-  );
-}
-
-function AttachIcon({ className = 'h-5 w-5' }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className={className}>
-      <path d="M21 11.5L12.6 20a5 5 0 1 1-7.1-7.1l9.2-9.2a3.5 3.5 0 1 1 5 5l-9.5 9.6a2 2 0 1 1-2.8-2.8l8.4-8.4" />
     </svg>
   );
 }
