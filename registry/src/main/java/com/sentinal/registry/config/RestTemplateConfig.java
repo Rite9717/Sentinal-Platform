@@ -14,7 +14,7 @@ import java.time.Duration;
 @Configuration
 public class RestTemplateConfig {
 
-    @Value("${sentinel.ai.service.timeout:120000}")
+    @Value("${sentinel.ai.service.timeout:240000}")
     private int aiServiceTimeout;
 
     @Bean

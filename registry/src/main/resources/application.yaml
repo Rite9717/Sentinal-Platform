@@ -75,4 +75,33 @@ sentinel:
     service:
       url: ${SENTINEL_AI_URL:http://localhost:8000}
       enabled: ${SENTINEL_AI_ENABLED:false}
-      timeout: 30000
+      timeout: 240000
+  metrics:
+    snapshot:
+      # Phase 1 storage control: reduce write frequency for stable UP instances.
+      up-steady-interval-seconds: ${SENTINEL_METRICS_UP_STEADY_INTERVAL_SECONDS:300}
+      up-change-interval-seconds: ${SENTINEL_METRICS_UP_CHANGE_INTERVAL_SECONDS:90}
+      incident-interval-seconds: ${SENTINEL_METRICS_INCIDENT_INTERVAL_SECONDS:20}
+      max-silent-interval-seconds: ${SENTINEL_METRICS_MAX_SILENT_INTERVAL_SECONDS:900}
+      delta:
+        cpu: ${SENTINEL_METRICS_DELTA_CPU:2.0}
+        memory: ${SENTINEL_METRICS_DELTA_MEMORY:2.0}
+        disk: ${SENTINEL_METRICS_DELTA_DISK:1.0}
+        network-in: ${SENTINEL_METRICS_DELTA_NETWORK_IN:1024.0}
+        network-out: ${SENTINEL_METRICS_DELTA_NETWORK_OUT:1024.0}
+    rollup:
+      enabled: ${SENTINEL_METRICS_ROLLUP_ENABLED:true}
+      lookback-minutes: ${SENTINEL_METRICS_ROLLUP_LOOKBACK_MINUTES:180}
+      job:
+        one-minute:
+          fixed-delay-ms: ${SENTINEL_METRICS_ROLLUP_1M_DELAY_MS:60000}
+        fifteen-minute:
+          fixed-delay-ms: ${SENTINEL_METRICS_ROLLUP_15M_DELAY_MS:300000}
+    retention:
+      enabled: ${SENTINEL_METRICS_RETENTION_ENABLED:true}
+      raw-days: ${SENTINEL_METRICS_RETENTION_RAW_DAYS:7}
+      rollup-1m-days: ${SENTINEL_METRICS_RETENTION_ROLLUP_1M_DAYS:90}
+      rollup-15m-days: ${SENTINEL_METRICS_RETENTION_ROLLUP_15M_DAYS:365}
+      batch-size: ${SENTINEL_METRICS_RETENTION_BATCH_SIZE:1000}
+      job:
+        fixed-delay-ms: ${SENTINEL_METRICS_RETENTION_DELAY_MS:3600000}

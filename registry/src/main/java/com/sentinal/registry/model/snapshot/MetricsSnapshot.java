@@ -11,7 +11,14 @@ import java.time.LocalDateTime;
 
 @Entity
 @Data
-@Table(name  = "metrics_snapshot")
+@Table(
+        name  = "metrics_snapshot",
+        indexes = {
+                @Index(name = "idx_metrics_snapshot_instance_collected", columnList = "instance_id,collectedAt"),
+                @Index(name = "idx_metrics_snapshot_valid_collected", columnList = "isValid,collectedAt"),
+                @Index(name = "idx_metrics_snapshot_collected", columnList = "collectedAt")
+        }
+)
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
@@ -29,11 +36,14 @@ public class MetricsSnapshot
     private String errorMessage;
     private LocalDateTime snapshotTime;
     private LocalDateTime errorTime;
+    private LocalDateTime collectedAt;
+    private Boolean isValid;
 
     private Double cpuUsage;
     private Double memoryUsage;
     private Double networkIn;
     private Double networkOut;
+    private Double diskUsage;
     private Double diskIops;
     private Double instanceState;
 

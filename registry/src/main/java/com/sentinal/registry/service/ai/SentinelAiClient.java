@@ -1,15 +1,24 @@
 package com.sentinal.registry.service.ai;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sentinal.registry.dto.ai.*;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.*;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 @Service
@@ -22,16 +31,14 @@ public class SentinelAiClient {
     @Value("${sentinel.ai.service.enabled:false}")
     private boolean aiServiceEnabled;
 
-    @Value("${sentinel.ai.service.timeout:30000}")
+    @Value("${sentinel.ai.service.timeout:240000}")
     private int timeoutMs;
 
     private final RestTemplate restTemplate;
-    private final ObjectMapper objectMapper;
 
-    public SentinelAiClient(@Qualifier("aiRestTemplate") RestTemplate restTemplate, ObjectMapper objectMapper)
+    public SentinelAiClient(@Qualifier("aiRestTemplate") RestTemplate restTemplate)
     {
         this.restTemplate = restTemplate;
-        this.objectMapper = objectMapper;
     }
 
     public CompletableFuture<AiAnalysisResponse> analyzeAsync(AiAnalysisRequest request) {
@@ -45,19 +52,7 @@ public class SentinelAiClient {
 
         return CompletableFuture.supplyAsync(() -> {
             try {
-                String requestBody = objectMapper.writeValueAsString(request);
-                HttpHeaders headers = new HttpHeaders();
-                headers.setContentType(MediaType.APPLICATION_JSON);
-
-                ResponseEntity<String> response = restTemplate.exchange(
-                        aiServiceUrl + "/analyze",
-                        HttpMethod.POST,
-                        new HttpEntity<>(requestBody, headers),
-                        String.class
-                );
-
-                return objectMapper.readValue(response.getBody(), AiAnalysisResponse.class);
-
+                return analyze(request);
             } catch (Exception e) {
                 log.error("Async AI call failed for instance {}: {}",
                         request.getInstance().getInstanceId(), e.getMessage());
@@ -67,43 +62,58 @@ public class SentinelAiClient {
     }
 
     public AiAnalysisResponse analyze(AiAnalysisRequest request) {
+        String instanceId = request.getInstance() != null ? request.getInstance().getInstanceId() : null;
+
         if (!aiServiceEnabled) {
             log.warn("AI service is disabled. Skipping analysis for instance: {}", 
-                    request.getInstance().getInstanceId());
-            return createDisabledResponse(request.getInstance().getInstanceId());
+                    instanceId);
+            return createDisabledResponse(instanceId);
+        }
+
+        if (!StringUtils.hasText(instanceId)) {
+            return createErrorResponse("unknown", "Missing instanceId in analysis request");
         }
 
         try {
-            String url = aiServiceUrl + "/analyze";
+            String url = buildAiUrl("/agent/analyze-instance");
+            int promptChars = request.getAnalysisTask() != null ? request.getAnalysisTask().length() : 0;
             log.info("Sending AI analysis request for instance {} to {}", 
-                    request.getInstance().getInstanceId(), url);
+                    instanceId, url);
+            log.info("AI request context: instanceId={}, snapshotId={}, promptChars={}",
+                    instanceId, request.getSelectedSnapshotId(), promptChars);
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setAccept(List.of(MediaType.APPLICATION_JSON));
 
-            HttpEntity<AiAnalysisRequest> entity = new HttpEntity<>(request, headers);
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("instance_id", instanceId);
+            payload.put("user_question", request.getAnalysisTask());
+            payload.put("snapshot_id", request.getSelectedSnapshotId());
 
-            ResponseEntity<AiAnalysisResponse> response = restTemplate.exchange(
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(payload, headers);
+
+            ResponseEntity<Map> response = restTemplate.exchange(
                     url,
                     HttpMethod.POST,
                     entity,
-                    AiAnalysisResponse.class
+                    Map.class
             );
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 log.info("AI analysis completed successfully for instance: {}", 
-                        request.getInstance().getInstanceId());
-                return response.getBody();
+                        instanceId);
+                return mapResponse(instanceId, response.getBody());
             } else {
                 log.error("AI service returned non-success status: {}", response.getStatusCode());
-                return createErrorResponse(request.getInstance().getInstanceId(), 
+                return createErrorResponse(instanceId, 
                         "AI service returned status: " + response.getStatusCode());
             }
 
         } catch (Exception e) {
             log.error("Failed to get AI analysis for instance {}: {}", 
-                    request.getInstance().getInstanceId(), e.getMessage(), e);
-            return createErrorResponse(request.getInstance().getInstanceId(), e.getMessage());
+                    instanceId, e.getMessage(), e);
+            return createErrorResponse(instanceId, e.getMessage());
         }
     }
 
@@ -113,13 +123,116 @@ public class SentinelAiClient {
         }
 
         try {
-            String url = aiServiceUrl + "/health";
+            String url = buildAiUrl("/");
             ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
             return response.getStatusCode().is2xxSuccessful();
         } catch (Exception e) {
             log.warn("AI service health check failed: {}", e.getMessage());
             return false;
         }
+    }
+
+    private String buildAiUrl(String path) {
+        if (aiServiceUrl.endsWith("/") && path.startsWith("/")) {
+            return aiServiceUrl.substring(0, aiServiceUrl.length() - 1) + path;
+        }
+        if (!aiServiceUrl.endsWith("/") && !path.startsWith("/")) {
+            return aiServiceUrl + "/" + path;
+        }
+        return aiServiceUrl + path;
+    }
+
+    private AiAnalysisResponse mapResponse(String instanceId, Map<?, ?> responseBody) {
+        String rawResponse = asString(responseBody.get("raw_response"));
+        String severity = asString(responseBody.get("severity"));
+        String rootCause = asString(responseBody.get("root_cause"));
+        List<String> evidence = asStringList(responseBody.get("evidence"));
+        List<String> actions = asStringList(responseBody.get("recommended_actions"));
+        Boolean autoExecutable = asBoolean(responseBody.get("auto_executable"));
+
+        String resolvedRootCause = StringUtils.hasText(rootCause)
+                ? rootCause
+                : "No explicit root cause provided by the AI service.";
+        String remediation = actions.isEmpty()
+                ? "No remediation steps were provided."
+                : String.join("\n", actions);
+        String combined = StringUtils.hasText(rawResponse)
+                ? rawResponse
+                : buildCombinedNarrative(severity, resolvedRootCause, evidence, actions, autoExecutable);
+        String triage = StringUtils.hasText(severity) ? "Severity: " + severity : "Analysis completed";
+
+        return AiAnalysisResponse.builder()
+                .instanceId(instanceId)
+                .generatedAt(LocalDateTime.now().toString())
+                .triage(triage)
+                .rootCause(resolvedRootCause)
+                .remediation(remediation)
+                .combinedAnalysis(combined)
+                .build();
+    }
+
+    private String buildCombinedNarrative(
+            String severity,
+            String rootCause,
+            List<String> evidence,
+            List<String> actions,
+            Boolean autoExecutable
+    ) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Severity: ").append(StringUtils.hasText(severity) ? severity : "UNKNOWN").append("\n");
+        sb.append("Root Cause: ").append(rootCause).append("\n");
+
+        if (!evidence.isEmpty()) {
+            sb.append("Evidence:\n");
+            for (String item : evidence) {
+                sb.append("- ").append(item).append("\n");
+            }
+        } else {
+            sb.append("Evidence: No supporting evidence returned.\n");
+        }
+
+        if (!actions.isEmpty()) {
+            sb.append("Recommended Actions:\n");
+            for (String item : actions) {
+                sb.append("- ").append(item).append("\n");
+            }
+        } else {
+            sb.append("Recommended Actions: No actions returned.\n");
+        }
+
+        if (autoExecutable != null) {
+            sb.append("Auto Executable: ").append(autoExecutable);
+        }
+
+        return sb.toString().trim();
+    }
+
+    private String asString(Object value) {
+        return value != null ? String.valueOf(value) : null;
+    }
+
+    private List<String> asStringList(Object value) {
+        if (value == null) {
+            return List.of();
+        }
+        if (value instanceof Collection<?> collection) {
+            List<String> values = new ArrayList<>();
+            for (Object entry : collection) {
+                values.add(String.valueOf(entry));
+            }
+            return values;
+        }
+        return List.of(String.valueOf(value));
+    }
+
+    private Boolean asBoolean(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        return Boolean.parseBoolean(String.valueOf(value));
     }
 
     private AiAnalysisResponse createDisabledResponse(String instanceId) {

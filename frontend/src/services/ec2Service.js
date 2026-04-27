@@ -1,4 +1,3 @@
-import axios from 'axios';
 import apiClient from './apiClient';
 
 /**
@@ -39,10 +38,7 @@ export const getUserInstances = async () => {
 };
 
 export const getInstanceMetrics = async (instanceId) => {
-  const token = localStorage.getItem('jwt_token');
-  const response = await axios.get(`http://localhost:8080/api/instances/${instanceId}/metrics`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
+  const response = await apiClient.get(`/api/instances/${instanceId}/metrics`);
   return response.data;
 };
 
@@ -58,9 +54,7 @@ export const getInstanceSnapshots = async (instanceId) => {
 
 export const analyseIncidentSnapshot = async ({ instanceId, snapshotId, prompt }) => {
   try {
-    const response = await apiClient.post('/ai/agenticai/analyse', {
-      instanceId,
-      snapshotId,
+    const response = await apiClient.post(`/api/instances/${instanceId}/incidents/${snapshotId}/analyze`, {
       prompt,
     });
     return response.data;

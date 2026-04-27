@@ -37,15 +37,15 @@ public class MailService
     private String buildEmailBody(InstanceEntity instance, IncidentSnapshot incident)
     {
         long durationMinutes = java.time.Duration.between(
-                incident.getIncidentStartTime(),
-                incident.getIncidentEndTime()
+                incident.getStartedAt(),
+                incident.getResolvedAt()
         ).toMinutes();
 
         String instanceId  = instance.getInstanceId();
         String region      = instance.getRegion();
         String nickname    = instance.getNickname() != null ? instance.getNickname() : "-";
-        String startTime   = incident.getIncidentStartTime().toString();
-        String endTime     = incident.getIncidentEndTime().toString();
+        String startTime   = incident.getStartedAt().toString();
+        String endTime     = incident.getResolvedAt().toString();
         String quarantine  = instance.getQuarantineCount() + " / " + instance.getMaxQuarantineCycles();
 
         return "<html><body style=\"font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto;\">"

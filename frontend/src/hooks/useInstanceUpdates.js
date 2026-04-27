@@ -19,7 +19,9 @@ export const useInstanceUpdates = (userId, onUpdate) => {
                 console.log('WebSocket connected ✓');
                 client.subscribe(`/topic/instances/${userId}`, (message) => {
                     const update = JSON.parse(message.body);
-                    onUpdate.current(update);
+                    if (typeof onUpdateRef.current === 'function') {
+                        onUpdateRef.current(update);
+                    }
                 });
             },
             onDisconnect: () => {

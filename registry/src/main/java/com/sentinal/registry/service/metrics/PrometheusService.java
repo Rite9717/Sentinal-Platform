@@ -25,6 +25,7 @@ public class PrometheusService
             .connectTimeout(Duration.ofSeconds(2))
             .readTimeout(Duration.ofSeconds(5))
             .build();
+
     private Map<String,Object> query(String promQL)
     {
         try {
@@ -88,59 +89,64 @@ public class PrometheusService
 
     public Map<String, Object> getAllMetrics(String instanceId, MonitorState state) {
         Map<String, Object> metrics = new HashMap<>();
-        if(state == null || state!= MonitorState.UP)
-        {
-            metrics.put("cpu", "0");
-            metrics.put("memory", "0");
-            metrics.put("disk", "0");
-            metrics.put("networkIn", "0");
-            metrics.put("networkOut", "0");
-            metrics.put("load", "0");
-            metrics.put("instanceId", instanceId);
-            metrics.put("status", "unavailable");
-            metrics.put("reason", "Instance is not UP (state: " + state + ")");
-            return metrics;
-        }
-        try {
-            double cpuUsage = Double.parseDouble(extractValue(getCpuUsage(instanceId)));
-            double memory = Double.parseDouble(extractValue(getMemoryUsage(instanceId)));
-            double disk  = Double.parseDouble(extractValue(getDiskUsage(instanceId)));
+        metrics.put("instanceId", instanceId);
+        metrics.put("state", state != null ? state.name() : "UNKNOWN");
 
-            metrics.put("cpu", String.format("%.2f", cpuUsage));
-            metrics.put("memory", String.format("%.2f", memory));
-            metrics.put("disk", String.format("%.2f", disk));
-            metrics.put("networkIn", extractValue(getNetworkIn(instanceId)));
-            metrics.put("networkOut", extractValue(getNetworkOut(instanceId)));
-            metrics.put("load", extractValue(getSystemLoad(instanceId)));
-            metrics.put("instanceId", instanceId);
-            metrics.put("status", "ok");
-        } catch (Exception e) {
-            metrics.put("status", "error");
-            metrics.put("error", e.getMessage());
-        }
+        Double cpu = extractValue(getCpuUsage(instanceId));
+        Double memory = extractValue(getMemoryUsage(instanceId));
+        Double disk = extractValue(getDiskUsage(instanceId));
+        Double networkIn = extractValue(getNetworkIn(instanceId));
+        Double networkOut = extractValue(getNetworkOut(instanceId));
+        Double load = extractValue(getSystemLoad(instanceId));
 
+        metrics.put("cpu", cpu);
+        metrics.put("memory", memory);
+        metrics.put("disk", disk);
+        metrics.put("networkIn", networkIn);
+        metrics.put("networkOut", networkOut);
+        metrics.put("load", load);
+
+        boolean isValid = cpu != null || memory != null || disk != null || networkIn != null || networkOut != null || load != null;
+        metrics.put("isValid", isValid);
+        metrics.put("status", isValid ? "ok" : "unavailable");
+        if (!isValid) {
+            metrics.put("reason", "Prometheus returned no metric samples for this check");
+        }
         return metrics;
     }
 
     // Extract the actual value from Prometheus response
-    private String extractValue(Map<String, Object> response) {
+    private Double extractValue(Map<String, Object> response) {
         try {
+            if (response == null || !"success".equals(response.get("status"))) {
+                return null;
+            }
             Map<String, Object> data = (Map<String, Object>) response.get("data");
+            if (data == null) {
+                return null;
+            }
             List<Map<String, Object>> result = (List<Map<String, Object>>) data.get("result");
-            if (result != null && result.isEmpty())
-            {
-                return "0";
+            if (result == null || result.isEmpty()) {
+                return null;
             }
-            double sum = 0;
-            for (Map<String, Object> entry : result)
-            {
+            double sum = 0.0;
+            boolean hasValue = false;
+            for (Map<String, Object> entry : result) {
                 List<Object> value = (List<Object>) entry.get("value");
-                sum+= Double.parseDouble(value.get(1).toString());
+                if (value == null || value.size() < 2 || value.get(1) == null) {
+                    continue;
+                }
+                String raw = value.get(1).toString().trim();
+                if (raw.isEmpty() || "NaN".equalsIgnoreCase(raw)) {
+                    continue;
+                }
+                sum += Double.parseDouble(raw);
+                hasValue = true;
             }
-            return String.valueOf(sum);
+            return hasValue ? sum : null;
         } catch (Exception e) {
             log.warn("Could not extract value from Prometheus response: {}", e.getMessage());
         }
-        return "0";
+        return null;
     }
 }

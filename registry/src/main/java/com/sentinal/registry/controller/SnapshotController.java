@@ -1,12 +1,11 @@
 package com.sentinal.registry.controller;
 
 import com.sentinal.registry.model.snapshot.IncidentSnapshot;
-import com.sentinal.registry.model.snapshot.MetricsSnapshot;
 import com.sentinal.registry.repository.IncidentSnapshotRepository;
 import com.sentinal.registry.repository.InstanceRepository;
-import com.sentinal.registry.repository.MetricSnapshotRepository;
 import com.sentinal.registry.service.ai.AiAnalysisService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -18,6 +17,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/instances")
 @RequiredArgsConstructor
+@Slf4j
 public class SnapshotController {
 
     private final IncidentSnapshotRepository incidentRepository;
@@ -31,7 +31,7 @@ public class SnapshotController {
                 .filter(i -> i.getUser().getUsername().equals(userDetails.getUsername()))
                 .map(i -> {
                     List<IncidentSnapshot> incidents = incidentRepository
-                            .findByInstanceEntity_InstanceIdAndIncidentEndTimeIsNotNullOrderByIncidentStartTimeDesc(
+                            .findByInstanceEntity_InstanceIdAndResolvedAtIsNotNullOrderByStartedAtDesc(
                                     i.getInstanceId());
                     return ResponseEntity.ok(incidents);
                 })
@@ -44,7 +44,7 @@ public class SnapshotController {
         return instanceRepository.findById(id)
                 .filter(i -> i.getUser().getUsername().equals(userDetails.getUsername()))
                 .map(i -> incidentRepository
-                        .findByInstanceEntity_InstanceIdAndIncidentEndTimeIsNull(i.getInstanceId())
+                        .findFirstByInstanceEntity_InstanceIdAndResolvedAtIsNullOrderByStartedAtDesc(i.getInstanceId())
                         .<ResponseEntity<?>>map(ResponseEntity::ok)
                         .orElse(ResponseEntity.noContent().build()))
                 .orElse(ResponseEntity.notFound().build());
@@ -71,6 +71,7 @@ public class SnapshotController {
                 .flatMap(i -> incidentRepository.findById(incidentId))
                 .map(incident -> {
                     incident.setAiAnalysis(analysis);
+                    incident.setAiSummary(analysis);
                     incidentRepository.save(incident);
                     return ResponseEntity.ok().build();
                 })
@@ -80,14 +81,21 @@ public class SnapshotController {
     @PostMapping("/{id}/incidents/{incidentId}/analyze")
     public ResponseEntity<?> triggerAiAnalysis(@PathVariable Long id,
                                                @PathVariable Long incidentId,
+                                               @RequestBody(required = false) Map<String, String> body,
                                                @AuthenticationPrincipal UserDetails userDetails) {
+        String prompt = body != null ? body.get("prompt") : null;
         return instanceRepository.findById(id)
                 .filter(i -> i.getUser().getUsername().equals(userDetails.getUsername()))
-                .flatMap(i -> incidentRepository.findById(incidentId))
+                .flatMap(i -> incidentRepository.findById(incidentId)
+                        .filter(incident -> incident.getInstanceEntity() != null
+                                && incident.getInstanceEntity().getId().equals(i.getId())))
                 .map(incident -> {
                     try {
-                        var response = aiAnalysisService.analyzeIncident(incident);
+                        log.info("Triggering AI analysis for instanceId={} incidentId={} promptChars={}",
+                                id, incidentId, prompt != null ? prompt.length() : 0);
+                        var response = aiAnalysisService.analyzeIncident(incident, prompt);
                         incident.setAiAnalysis(response.getCombinedAnalysis());
+                        incident.setAiSummary(response.getCombinedAnalysis());
                         incidentRepository.save(incident);
                         return ResponseEntity.ok(response);
                     } catch (Exception e) {

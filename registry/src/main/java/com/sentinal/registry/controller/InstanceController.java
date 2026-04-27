@@ -5,6 +5,7 @@ import com.sentinal.registry.model.instances.InstanceEntity;
 import com.sentinal.registry.model.instances.MonitorState;
 import com.sentinal.registry.repository.InstanceRepository;
 import com.sentinal.registry.service.EC2.InstanceService;
+import com.sentinal.registry.service.metrics.PrometheusService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -21,6 +22,7 @@ public class InstanceController
 {
     private final InstanceService instanceService;
     private final InstanceRepository instanceRepository;
+    private final PrometheusService prometheusService;
 
     @PostMapping("/register")
     public ResponseEntity<InstanceEntity> register(@RequestBody RegisterInstanceRequest request, @AuthenticationPrincipal UserDetails userDetails)
@@ -57,5 +59,17 @@ public class InstanceController
     {
         instanceService.deleteInstance(id, userDetails.getUsername());
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{id}/metrics")
+    public ResponseEntity<?> getInstanceMetrics(@PathVariable Long id, @AuthenticationPrincipal UserDetails userDetails)
+    {
+        return instanceRepository.findById(id)
+                .filter(instance -> instance.getUser().getUsername()
+                        .equals(userDetails.getUsername()))
+                .map(instance -> ResponseEntity.ok(
+                        prometheusService.getAllMetrics(instance.getInstanceId(),instance.getState())
+                ))
+                .orElse(ResponseEntity.notFound().build());
     }
 }

@@ -17,7 +17,10 @@ import java.util.List;
 @AllArgsConstructor
 public class AiAnalysisRequest {
     private AiInstanceDetails instance;
+    private Long selectedSnapshotId;
+    private AiMetricsSnapshot lastGoodSnapshot;
     private List<AiIncidentSnapshot> incidentSnapshots;
     private List<AiMetricsSnapshot> metricsSnapshots;
+    private List<AiMetricAnomaly> metricAnomalies;
     private String analysisTask;
 }

@@ -15,10 +15,16 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class AiIncidentSnapshot {
     private Long id;
-    private String incidentStartTime;
-    private String incidentEndTime;
+    private String status;
+    private String severity;
+    private String startedAt;
+    private String resolvedAt;
+    private String stateTransition;
+    private String triggerReason;
+    private Long lastGoodSnapshotId;
     private String resolution;
     private String metricsTimeline;
     private String aiContext;
     private String aiAnalysis;
+    private String aiSummary;
 }

@@ -26,8 +26,18 @@ public class IncidentSnapshot
     @JoinColumn(name  = "instance_id")
     private InstanceEntity instanceEntity;
 
-    private LocalDateTime incidentStartTime;
-    private LocalDateTime incidentEndTime;
+    @Enumerated(EnumType.STRING)
+    private MonitorState status;
+
+    private String severity;
+    private LocalDateTime startedAt;
+    private LocalDateTime resolvedAt;
+    private String stateTransition;
+
+    @Column(columnDefinition = "TEXT")
+    private String triggerReason;
+
+    private Long lastGoodSnapshotId;
 
     @Enumerated(EnumType.STRING)
     private MonitorState resolution;
@@ -40,4 +50,7 @@ public class IncidentSnapshot
 
     @Column(columnDefinition = "TEXT")
     private String aiAnalysis;
+
+    @Column(columnDefinition = "TEXT")
+    private String aiSummary;
 }
