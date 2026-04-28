@@ -21,6 +21,9 @@ public class PrometheusService
     @Value("${prometheus.url}")
     private String prometheusUrl;
 
+    @Value("${sentinel.metrics.prometheus.cpu-rate-window:1m}")
+    private String cpuRateWindow;
+
     private final RestTemplate restTemplate =  new RestTemplateBuilder()
             .connectTimeout(Duration.ofSeconds(2))
             .readTimeout(Duration.ofSeconds(5))
@@ -46,8 +49,9 @@ public class PrometheusService
     // CPU usage — FIXED
     public Map<String, Object> getCpuUsage(String instanceId) {
         String promQL = String.format(
-                "100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\",instance_id=\"%s\"}[5m])))",
-                instanceId
+                "100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\",instance_id=\"%s\"}[%s])))",
+                instanceId,
+                cpuRateWindow
         );
         return query(promQL);
     }
@@ -102,6 +106,7 @@ public class PrometheusService
         metrics.put("cpu", cpu);
         metrics.put("memory", memory);
         metrics.put("disk", disk);
+        metrics.put("diskIops", null);
         metrics.put("networkIn", networkIn);
         metrics.put("networkOut", networkOut);
         metrics.put("load", load);

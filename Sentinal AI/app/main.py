@@ -16,6 +16,7 @@ async def analyze(request: AnalyzeInstanceRequest):
             instance_id=request.instance_id,
             user_question=request.user_question,
             snapshot_id=request.snapshot_id,
+            agent_context=request.agent_context,
         )
         try:
             return json.loads(result)

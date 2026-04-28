@@ -1,10 +1,11 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 class AnalyzeInstanceRequest(BaseModel):
     instance_id: str
     user_question: Optional[str] = None
     snapshot_id: Optional[int] = None
+    agent_context: Optional[Dict[str, Any]] = None
 
 class AgentResponse(BaseModel):
     severity: str

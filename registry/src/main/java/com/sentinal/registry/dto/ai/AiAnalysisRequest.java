@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Request payload for the Sentinel AI Analysis Service.
@@ -23,4 +24,5 @@ public class AiAnalysisRequest {
     private List<AiMetricsSnapshot> metricsSnapshots;
     private List<AiMetricAnomaly> metricAnomalies;
     private String analysisTask;
+    private Map<String, Object> agentContext;
 }

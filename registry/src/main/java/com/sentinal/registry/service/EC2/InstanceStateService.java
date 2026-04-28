@@ -2,9 +2,13 @@ package com.sentinal.registry.service.EC2;
 
 import com.sentinal.registry.model.instances.InstanceEntity;
 import com.sentinal.registry.model.instances.MonitorState;
+import com.sentinal.registry.model.snapshot.IncidentSnapshot;
+import com.sentinal.registry.model.snapshot.LatestMetrics;
+import com.sentinal.registry.repository.IncidentSnapshotRepository;
 import com.sentinal.registry.repository.InstanceRepository;
 import com.sentinal.registry.service.metrics.IncidentSnapshotService;
 import com.sentinal.registry.service.metrics.MetricAnomalyService;
+import com.sentinal.registry.service.metrics.LatestMetricsService;
 import com.sentinal.registry.service.metrics.MetricsSnapshotService;
 import com.sentinal.registry.service.metrics.PrometheusService;
 import lombok.RequiredArgsConstructor;
@@ -21,9 +25,11 @@ public class InstanceStateService
 {
     private final EC2HealthService ec2HealthService;
     private final InstanceRepository instanceRepository;
+    private final IncidentSnapshotRepository incidentRepository;
     private final InstanceEventPublisher eventPublisher;
     private final MetricsSnapshotService snapshotService;
     private final MetricAnomalyService anomalyService;
+    private final LatestMetricsService latestMetricsService;
     private final PrometheusService prometheusService;
     private final IncidentSnapshotService incidentSnapshotService;
 
@@ -73,7 +79,23 @@ public class InstanceStateService
         boolean healthy = Boolean.TRUE.equals(health.get("healthy"));
         MonitorState previousState = instance.getState();
 
-        MetricAnomalyService.DetectionResult anomalyResult = anomalyService.detectAndPersist(instance, health);
+        LatestMetrics previousLatest = latestMetricsService.findByInstanceId(instance.getId()).orElse(null);
+        latestMetricsService.upsert(instance, health);
+
+        IncidentSnapshot activeIncident = incidentRepository
+                .findFirstByInstanceEntity_InstanceIdAndResolvedAtIsNullOrderByStartedAtDesc(instance.getInstanceId())
+                .orElse(null);
+
+        MetricAnomalyService.DetectionResult anomalyResult = anomalyService.processMetrics(
+                instance,
+                health,
+                previousLatest,
+                activeIncident
+        );
+        if (anomalyResult.lifecycleChanged()) {
+            anomalyResult.anomalyIds().forEach(anomalyId ->
+                    incidentSnapshotService.onAnomalyLinked(instance, anomalyId, "Anomaly lifecycle changed"));
+        }
 
         boolean shouldContinueEvaluation = true;
         if (instance.getState() == MonitorState.QUARANTINED) 
@@ -114,13 +136,17 @@ public class InstanceStateService
         }
 
         boolean stateChanged = previousState != instance.getState();
-        snapshotService.captureMonitoringSnapshot(
-                instance,
-                health,
-                healthy,
-                stateChanged,
-                anomalyResult.hasLifecycleChange()
-        );
+        if (stateChanged) {
+            IncidentSnapshot incidentForLink = incidentRepository
+                    .findFirstByInstanceEntity_InstanceIdAndResolvedAtIsNullOrderByStartedAtDesc(instance.getInstanceId())
+                    .orElse(activeIncident);
+            snapshotService.saveStateChangeSnapshot(
+                    instance,
+                    health,
+                    previousState + " -> " + instance.getState(),
+                    incidentForLink
+            );
+        }
         instanceRepository.save(instance);
     }
 
@@ -159,7 +185,7 @@ public class InstanceStateService
 
         if (instance.getState() == MonitorState.UP)
         {
-            Long lastGoodSnapshotId = snapshotService.findLatestValidSnapshotId(instance.getInstanceId()).orElse(null);
+            Long lastGoodSnapshotId = snapshotService.findLatestValidSnapshotId(instance.getId()).orElse(null);
             log.warn("Instance {} → SUSPECT (strike {})", instance.getInstanceId(), strikes);
             transitionTo(instance, MonitorState.SUSPECT);
             incidentSnapshotService.onIncidentStart(

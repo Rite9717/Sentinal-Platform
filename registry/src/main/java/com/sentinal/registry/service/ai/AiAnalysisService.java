@@ -1,24 +1,21 @@
 package com.sentinal.registry.service.ai;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sentinal.registry.dto.ai.*;
 import com.sentinal.registry.model.instances.InstanceEntity;
 import com.sentinal.registry.model.snapshot.IncidentSnapshot;
-import com.sentinal.registry.model.snapshot.MetricAnomaly;
-import com.sentinal.registry.model.snapshot.MetricsSnapshot;
 import com.sentinal.registry.repository.IncidentSnapshotRepository;
-import com.sentinal.registry.repository.MetricAnomalyRepository;
-import com.sentinal.registry.repository.MetricSnapshotRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 @Service
 @Slf4j
@@ -27,8 +24,7 @@ public class AiAnalysisService {
 
     private final SentinelAiClient aiClient;
     private final IncidentSnapshotRepository incidentRepository;
-    private final MetricSnapshotRepository metricsRepository;
-    private final MetricAnomalyRepository anomalyRepository;
+    private final ObjectMapper objectMapper;
 
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
@@ -41,25 +37,13 @@ public class AiAnalysisService {
                 incident.getId(), incident.getInstanceEntity().getInstanceId());
 
         InstanceEntity instance = incident.getInstanceEntity();
-        String instanceId = instance.getInstanceId();
-
-        Optional<MetricsSnapshot> lastGoodSnapshot = resolveLastGoodSnapshot(incident, instanceId);
-        List<MetricsSnapshot> recentPreIncidentSnapshots = resolveRecentSnapshotsBeforeIncident(incident, instanceId);
-        List<MetricsSnapshot> metricPayload = mergeMetrics(lastGoodSnapshot.orElse(null), recentPreIncidentSnapshots);
-
-        List<MetricAnomaly> unresolved = anomalyRepository
-                .findByInstanceEntity_InstanceIdAndResolvedAtIsNullOrderByCreatedAtDesc(instanceId);
-        List<MetricAnomaly> recent = anomalyRepository.findRecentByInstanceId(instanceId);
-        List<MetricAnomaly> anomalyPayload = mergeAnomalies(unresolved, recent);
+        Map<String, Object> structuredContext = buildStructuredContext(instance.getId(), incident.getId());
 
         AiAnalysisRequest request = buildAnalysisRequest(
                 instance,
-                List.of(incident),
-                metricPayload,
-                anomalyPayload,
-                lastGoodSnapshot.orElse(null),
                 analysisTask,
-                incident.getId()
+                incident.getId(),
+                structuredContext
         );
 
         return aiClient.analyze(request);
@@ -75,20 +59,13 @@ public class AiAnalysisService {
                 .findFirstByInstanceEntity_InstanceIdAndResolvedAtIsNotNullOrderByResolvedAtDesc(
                         instance.getInstanceId())
                 .map(incident -> {
-                    Optional<MetricsSnapshot> lastGood = resolveLastGoodSnapshot(incident, instance.getInstanceId());
-                    List<MetricsSnapshot> recentMetrics = resolveRecentSnapshotsBeforeIncident(incident, instance.getInstanceId());
-                    List<MetricAnomaly> unresolved = anomalyRepository
-                            .findByInstanceEntity_InstanceIdAndResolvedAtIsNullOrderByCreatedAtDesc(instance.getInstanceId());
-                    List<MetricAnomaly> recent = anomalyRepository.findRecentByInstanceId(instance.getInstanceId());
+                    Map<String, Object> structuredContext = buildStructuredContext(instance.getId(), incident.getId());
 
                     AiAnalysisRequest request = buildAnalysisRequest(
                             instance,
-                            List.of(incident),
-                            mergeMetrics(lastGood.orElse(null), recentMetrics),
-                            mergeAnomalies(unresolved, recent),
-                            lastGood.orElse(null),
                             null,
-                            incident.getId()
+                            incident.getId(),
+                            structuredContext
                     );
 
                     aiClient.analyzeAsync(request).thenAccept(response -> {
@@ -108,83 +85,84 @@ public class AiAnalysisService {
 
     private AiAnalysisRequest buildAnalysisRequest(
             InstanceEntity instance,
-            List<IncidentSnapshot> incidents,
-            List<MetricsSnapshot> metrics,
-            List<MetricAnomaly> anomalies,
-            MetricsSnapshot lastGoodSnapshot,
             String analysisTask,
-            Long selectedSnapshotId
+            Long selectedSnapshotId,
+            Map<String, Object> structuredContext
     ) {
         return AiAnalysisRequest.builder()
                 .instance(mapInstanceDetails(instance))
                 .selectedSnapshotId(selectedSnapshotId)
-                .lastGoodSnapshot(lastGoodSnapshot != null ? mapMetricsSnapshot(lastGoodSnapshot) : null)
-                .incidentSnapshots(incidents.stream()
-                        .map(this::mapIncidentSnapshot)
-                        .collect(Collectors.toList()))
-                .metricsSnapshots(metrics.stream()
-                        .map(this::mapMetricsSnapshot)
-                        .collect(Collectors.toList()))
-                .metricAnomalies(anomalies.stream()
-                        .map(this::mapMetricAnomaly)
-                        .collect(Collectors.toList()))
+                .lastGoodSnapshot(null)
+                .incidentSnapshots(List.of())
+                .metricsSnapshots(List.of())
+                .metricAnomalies(List.of())
                 .analysisTask(analysisTask)
+                .agentContext(structuredContext)
                 .build();
     }
 
-    private Optional<MetricsSnapshot> resolveLastGoodSnapshot(IncidentSnapshot incident, String instanceId) {
-        if (incident.getLastGoodSnapshotId() != null) {
-            Optional<MetricsSnapshot> byIncidentLink = metricsRepository.findById(incident.getLastGoodSnapshotId());
-            if (byIncidentLink.isPresent()) {
-                return byIncidentLink;
-            }
+    public Optional<Map<String, Object>> buildAiSnapshot(Long instanceDbId, Long incidentId) {
+        Optional<Map<String, Object>> storedSnapshot = incidentRepository.findById(incidentId)
+                .flatMap(this::parseStoredAiContext);
+        if (storedSnapshot.isPresent()) {
+            return storedSnapshot;
         }
-        return metricsRepository.findTopByInstanceEntity_InstanceIdAndIsValidTrueOrderByCollectedAtDesc(instanceId);
+        return incidentRepository.findById(incidentId).map(this::buildFallbackSnapshot);
     }
 
-    private List<MetricsSnapshot> resolveRecentSnapshotsBeforeIncident(IncidentSnapshot incident, String instanceId) {
-        LocalDateTime start = incident.getStartedAt();
-        if (start != null) {
-            return metricsRepository.findTop20ByInstanceEntity_InstanceIdAndCollectedAtLessThanEqualOrderByCollectedAtDesc(
-                    instanceId,
-                    start
-            );
+    private Map<String, Object> buildStructuredContext(Long instanceDbId, Long incidentId) {
+        Optional<Map<String, Object>> storedSnapshot = incidentRepository.findById(incidentId)
+                .flatMap(this::parseStoredAiContext);
+        if (storedSnapshot.isPresent()) {
+            return storedSnapshot.get();
         }
-        return metricsRepository.findTop20ByInstanceEntity_InstanceIdOrderByCollectedAtDesc(instanceId);
+        return incidentRepository.findById(incidentId)
+                .map(this::buildFallbackSnapshot)
+                .orElseGet(LinkedHashMap::new);
     }
 
-    private List<MetricsSnapshot> mergeMetrics(MetricsSnapshot lastGood, List<MetricsSnapshot> recent) {
-        LinkedHashMap<Long, MetricsSnapshot> merged = new LinkedHashMap<>();
-        if (lastGood != null && lastGood.getId() != null) {
-            merged.put(lastGood.getId(), lastGood);
+    private Optional<Map<String, Object>> parseStoredAiContext(IncidentSnapshot incident) {
+        String raw = incident.getAiContext();
+        if (raw == null || raw.isBlank() || "{}".equals(raw.trim())) {
+            return Optional.empty();
         }
-        for (MetricsSnapshot snapshot : recent) {
-            if (snapshot.getId() != null) {
-                merged.putIfAbsent(snapshot.getId(), snapshot);
-            }
+        try {
+            Map<String, Object> parsed = objectMapper.readValue(raw, new TypeReference<>() {});
+            return parsed.isEmpty() ? Optional.empty() : Optional.of(parsed);
+        } catch (Exception e) {
+            log.warn("Stored AI snapshot context for incident {} is not valid JSON: {}", incident.getId(), e.getMessage());
+            return Optional.empty();
         }
-        return new ArrayList<>(merged.values())
-                .stream()
-                .limit(30)
-                .collect(Collectors.toList());
     }
 
-    private List<MetricAnomaly> mergeAnomalies(List<MetricAnomaly> unresolved, List<MetricAnomaly> recent) {
-        LinkedHashMap<Long, MetricAnomaly> merged = new LinkedHashMap<>();
-        for (MetricAnomaly anomaly : unresolved) {
-            if (anomaly.getId() != null) {
-                merged.putIfAbsent(anomaly.getId(), anomaly);
-            }
+    private Map<String, Object> buildFallbackSnapshot(IncidentSnapshot incident) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        Map<String, Object> instance = new LinkedHashMap<>();
+        if (incident.getInstanceEntity() != null) {
+            InstanceEntity entity = incident.getInstanceEntity();
+            instance.put("instanceId", entity.getInstanceId());
+            instance.put("state", entity.getState() != null ? entity.getState().name() : null);
+            instance.put("region", entity.getRegion());
         }
-        for (MetricAnomaly anomaly : recent) {
-            if (anomaly.getId() != null) {
-                merged.putIfAbsent(anomaly.getId(), anomaly);
-            }
-        }
-        return new ArrayList<>(merged.values())
-                .stream()
-                .limit(30)
-                .collect(Collectors.toList());
+        payload.put("instance", instance);
+        payload.put("latestMetrics", new LinkedHashMap<>());
+        payload.put("activeAnomalies", List.of());
+
+        Map<String, Object> incidentPayload = new LinkedHashMap<>();
+        incidentPayload.put("status", incident.getIncidentStatus() != null
+                ? incident.getIncidentStatus().name()
+                : null);
+        incidentPayload.put("startState", incident.getStartState() != null ? incident.getStartState().name() : null);
+        incidentPayload.put("triggerReason", incident.getTriggerReason());
+        incidentPayload.put("startedAt", format(incident.getStartedAt()));
+        payload.put("activeIncident", incidentPayload);
+
+        Map<String, Object> event = new LinkedHashMap<>();
+        event.put("eventType", incident.getStateTransition());
+        event.put("message", incident.getTriggerReason());
+        event.put("createdAt", format(incident.getStartedAt()));
+        payload.put("incidentEvents", List.of(event));
+        return payload;
     }
 
     private AiInstanceDetails mapInstanceDetails(InstanceEntity instance) {
@@ -200,57 +178,6 @@ public class AiAnalysisService {
                 .quarantineDurationMinutes(instance.getQuarantineDurationMinutes())
                 .lastError(instance.getLastError())
                 .stateChangedAt(instance.getStateChangedAt())
-                .build();
-    }
-
-    private AiIncidentSnapshot mapIncidentSnapshot(IncidentSnapshot incident) {
-        return AiIncidentSnapshot.builder()
-                .id(incident.getId())
-                .status(incident.getStatus() != null ? incident.getStatus().name() : null)
-                .severity(incident.getSeverity())
-                .startedAt(format(incident.getStartedAt()))
-                .resolvedAt(format(incident.getResolvedAt()))
-                .stateTransition(incident.getStateTransition())
-                .triggerReason(incident.getTriggerReason())
-                .lastGoodSnapshotId(incident.getLastGoodSnapshotId())
-                .resolution(incident.getResolution() != null ? incident.getResolution().name() : null)
-                .metricsTimeline(incident.getMetricsTimeline())
-                .aiContext(incident.getAiContext())
-                .aiAnalysis(incident.getAiAnalysis())
-                .aiSummary(incident.getAiSummary())
-                .build();
-    }
-
-    private AiMetricsSnapshot mapMetricsSnapshot(MetricsSnapshot metrics) {
-        return AiMetricsSnapshot.builder()
-                .id(metrics.getId())
-                .isValid(metrics.getIsValid())
-                .errorType(metrics.getErrorType())
-                .errorMessage(metrics.getErrorMessage())
-                .collectedAt(format(metrics.getCollectedAt()))
-                .snapshotTime(format(metrics.getSnapshotTime()))
-                .cpuUsage(metrics.getCpuUsage())
-                .memoryUsage(metrics.getMemoryUsage())
-                .diskUsage(metrics.getDiskUsage())
-                .networkIn(metrics.getNetworkIn())
-                .networkOut(metrics.getNetworkOut())
-                .diskIops(metrics.getDiskIops())
-                .instanceState(metrics.getInstanceState())
-                .aiContext(metrics.getAiContext())
-                .build();
-    }
-
-    private AiMetricAnomaly mapMetricAnomaly(MetricAnomaly anomaly) {
-        return AiMetricAnomaly.builder()
-                .id(anomaly.getId())
-                .metricName(anomaly.getMetricName())
-                .metricValue(anomaly.getMetricValue())
-                .threshold(anomaly.getThreshold())
-                .severity(anomaly.getSeverity())
-                .instanceState(anomaly.getInstanceState() != null ? anomaly.getInstanceState().name() : null)
-                .message(anomaly.getMessage())
-                .createdAt(format(anomaly.getCreatedAt()))
-                .resolvedAt(format(anomaly.getResolvedAt()))
                 .build();
     }
 

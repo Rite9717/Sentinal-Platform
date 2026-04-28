@@ -26,9 +26,21 @@ public class MetricAnomaly {
     @JoinColumn(name = "instance_id", nullable = false)
     private InstanceEntity instanceEntity;
 
-    private String metricName;
-    private Double metricValue;
+    @Enumerated(EnumType.STRING)
+    private MetricName metricName;
+
+    @Enumerated(EnumType.STRING)
+    private AnomalyStatus status;
+
+    @Enumerated(EnumType.STRING)
+    private AnomalyTriggerType triggerType;
+
+    private Double baselineValue;
+    private Double startValue;
+    private Double currentValue;
+    private Double peakValue;
     private Double threshold;
+    private Double spikePercentage;
     private String severity;
 
     @Enumerated(EnumType.STRING)
@@ -37,6 +49,18 @@ public class MetricAnomaly {
     @Column(columnDefinition = "TEXT")
     private String message;
 
+    // Legacy field (kept for backward compatibility with existing API consumers).
+    private Double metricValue;
+
+    // Legacy field (kept for backward compatibility).
     private LocalDateTime createdAt;
+
+    private LocalDateTime startedAt;
+    private LocalDateTime lastSeenAt;
     private LocalDateTime resolvedAt;
+
+    private Long preSpikeSnapshotId;
+    private Long startSnapshotId;
+    private Long peakSnapshotId;
+    private Long recoverySnapshotId;
 }

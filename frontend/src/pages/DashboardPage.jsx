@@ -6,6 +6,7 @@ import ChatSystem from '../components/dashboard/ChatSystem';
 import {
   analyseIncidentSnapshot,
   deleteInstance,
+  getIncidentAiSnapshot,
   getInstanceMetrics,
   getInstanceSnapshots,
   getUserInstances,
@@ -55,6 +56,7 @@ const DashboardPage = () => {
   const [snapshotsById, setSnapshotsById] = useState({});
   const [snapshotsLoadingById, setSnapshotsLoadingById] = useState({});
   const [snapshotSyncedAtById, setSnapshotSyncedAtById] = useState({});
+  const [snapshotDetailsByThread, setSnapshotDetailsByThread] = useState({});
   const [localMessagesById, setLocalMessagesById] = useState({});
   const [selectedInstanceId, setSelectedInstanceId] = useState(null);
   const [selectedSnapshotId, setSelectedSnapshotId] = useState(null);
@@ -91,34 +93,40 @@ const DashboardPage = () => {
     () => getSnapshotThreadKey(selectedInstance?.id, selectedSnapshot?.id),
     [selectedInstance?.id, selectedSnapshot?.id]
   );
+  const selectedSnapshotDetails = useMemo(
+    () => (selectedThreadKey ? snapshotDetailsByThread[selectedThreadKey] ?? null : null),
+    [selectedThreadKey, snapshotDetailsByThread]
+  );
 
   const selectedMessages = useMemo(() => {
     if (!selectedInstance) {
       return [];
     }
 
+    const localThreadMessages = selectedThreadKey ? localMessagesById[selectedThreadKey] ?? [] : [];
+    const hasLocalAiMessage = localThreadMessages.some((message) => message.sender === 'ai');
+
     const snapshotMessages = selectedSnapshot
       ? [
           {
             id: `snapshot-meta-${selectedSnapshot.id}`,
-            sender: 'user',
-            text: buildSnapshotSummary(selectedSnapshot),
+            sender: 'ai',
+            text: formatSnapshotPayloadForChat(selectedSnapshotDetails, selectedSnapshot),
             timestamp: formatTimestamp(selectedSnapshot.startedAt || selectedSnapshot.resolvedAt),
           },
-          ...(selectedSnapshot.aiAnalysis || selectedSnapshot.aiContext
+          ...(selectedSnapshot.aiAnalysis && !hasLocalAiMessage
             ? [{
                 id: `snapshot-ai-${selectedSnapshot.id}`,
                 sender: 'ai',
-                text: formatAiNarrative(selectedSnapshot.aiAnalysis || selectedSnapshot.aiContext),
+                text: formatAiNarrative(selectedSnapshot.aiAnalysis),
                 timestamp: formatTimestamp(selectedSnapshot.resolvedAt || selectedSnapshot.startedAt),
               }]
             : []),
         ]
       : [];
 
-    const localThreadMessages = selectedThreadKey ? localMessagesById[selectedThreadKey] ?? [] : [];
     return [...snapshotMessages, ...localThreadMessages];
-  }, [localMessagesById, selectedInstance, selectedSnapshot, selectedThreadKey]);
+  }, [localMessagesById, selectedInstance, selectedSnapshot, selectedSnapshotDetails, selectedThreadKey]);
 
   const effectiveAiTask = draftMessage.trim() || DEFAULT_AI_TASK;
   const tokenEstimate = Math.round(effectiveAiTask.split(/\s+/).length * 1.35);
@@ -146,6 +154,19 @@ const DashboardPage = () => {
       setSnapshotsLoadingById((current) => ({ ...current, [instanceId]: false }));
     }
   }, []);
+
+  const loadSnapshotDetails = useCallback(async (instanceId, snapshotId) => {
+    const threadKey = getSnapshotThreadKey(instanceId, snapshotId);
+    if (!threadKey || snapshotDetailsByThread[threadKey]) {
+      return;
+    }
+    try {
+      const details = await getIncidentAiSnapshot({ instanceId, snapshotId });
+      setSnapshotDetailsByThread((current) => ({ ...current, [threadKey]: details }));
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to load snapshot details payload');
+    }
+  }, [snapshotDetailsByThread]);
 
   const loadDashboard = useCallback(async (showSpinner) => {
     try {
@@ -211,6 +232,13 @@ const DashboardPage = () => {
       setSelectedSnapshotId(null);
     }
   }, [selectedSnapshotId, selectedSnapshots]);
+
+  useEffect(() => {
+    if (!selectedInstance?.id || !selectedSnapshot?.id) {
+      return;
+    }
+    loadSnapshotDetails(selectedInstance.id, selectedSnapshot.id);
+  }, [loadSnapshotDetails, selectedInstance?.id, selectedSnapshot?.id]);
 
   useEffect(() => {
     if (chatScrollRef.current) {
@@ -589,6 +617,7 @@ const DashboardPage = () => {
                 selectedMessages={selectedMessages}
                 snapshots={selectedSnapshots}
                 selectedSnapshot={selectedSnapshot}
+                selectedSnapshotDetails={selectedSnapshotDetails}
                 selectedSnapshotId={selectedSnapshotId}
                 snapshotsLoading={selectedInstance ? snapshotsLoadingById[selectedInstance.id] : false}
                 snapshotSyncedAt={selectedInstance ? snapshotSyncedAtById[selectedInstance.id] : null}
@@ -599,7 +628,12 @@ const DashboardPage = () => {
                   setSelectedSnapshotId(null);
                   loadSnapshots(instanceId);
                 }}
-                onSelectSnapshot={setSelectedSnapshotId}
+                onSelectSnapshot={(snapshotId) => {
+                  setSelectedSnapshotId(snapshotId);
+                  if (selectedInstance?.id) {
+                    loadSnapshotDetails(selectedInstance.id, snapshotId);
+                  }
+                }}
                 onRefreshSnapshots={() => selectedInstance?.id && loadSnapshots(selectedInstance.id)}
                 onSend={handleSendMessage}
                 isTyping={isTyping}
@@ -1260,34 +1294,91 @@ function getSnapshotThreadKey(instanceId, snapshotId) {
   return `${instanceId}::${snapshotId}`;
 }
 
-function buildSnapshotSummary(snapshot) {
-  const parts = [
-    `Lifecycle snapshot #${snapshot.id} started ${formatTimestamp(snapshot.startedAt)} and ended ${formatTimestamp(snapshot.resolvedAt)}.`,
+function formatSnapshotPayloadForChat(snapshotDetails, snapshot) {
+  const payload = snapshotDetails || {
+    instance: {
+      instanceId: snapshot?.instanceEntity?.instanceId || snapshot?.instanceId || 'unknown',
+      state: snapshot?.status || null,
+      region: snapshot?.instanceEntity?.region || null,
+    },
+    latestMetrics: null,
+    activeAnomalies: [],
+    activeIncident: {
+      status: snapshot?.status || null,
+      startState: snapshot?.status || null,
+      triggerReason: snapshot?.triggerReason || null,
+      startedAt: snapshot?.startedAt || null,
+    },
+    incidentEvents: [],
+  };
+
+  const instance = payload.instance || {};
+  const latest = payload.latestMetrics || {};
+  const incident = payload.activeIncident || {};
+  const anomalies = Array.isArray(payload.activeAnomalies) ? payload.activeAnomalies : [];
+  const primaryAnomaly = anomalies[0] || {};
+  const evidenceSnapshots = Array.isArray(primaryAnomaly.snapshots)
+    ? primaryAnomaly.snapshots.map((item) => ({
+        type: item?.type || 'SNAPSHOT',
+        collectedAt: item?.collectedAt,
+        label: `${primaryAnomaly.metricName || 'Metric'} ${item?.type || 'SNAPSHOT'} · CPU ${formatPercent(item?.cpuUsage)}`,
+      }))
+    : [];
+  const eventSnapshots = Array.isArray(payload.incidentEvents)
+    ? payload.incidentEvents.map((event) => ({
+        type: event?.eventType || 'EVENT',
+        collectedAt: event?.createdAt,
+        label: event?.message || 'Incident event captured',
+      }))
+    : [];
+  const fullTimeline = [...evidenceSnapshots, ...eventSnapshots]
+    .filter((item) => item.collectedAt || item.label)
+    .sort((left, right) => {
+      const leftTime = left.collectedAt ? new Date(left.collectedAt).getTime() : 0;
+      const rightTime = right.collectedAt ? new Date(right.collectedAt).getTime() : 0;
+      return leftTime - rightTime;
+    });
+
+  const lines = [
+    `Snapshot #${snapshot?.id || 'selected'} attached for AI analysis.`,
+    `Instance: ${instance.instanceId || snapshot?.instanceEntity?.instanceId || 'unknown'} · ${instance.region || snapshot?.instanceEntity?.region || 'unknown region'} · ${instance.state || snapshot?.status || 'UNKNOWN'}`,
+    `Lifecycle: ${incident.status || snapshot?.incidentStatus || snapshot?.status || 'UNKNOWN'}${incident.startState ? ` from ${incident.startState}` : ''}`,
   ];
 
-  if (snapshot.resolution) {
-    parts.push(`Resolution: ${snapshot.resolution}.`);
+  if (incident.triggerReason) {
+    lines.push(`Trigger: ${incident.triggerReason}`);
   }
 
-  const timelineCount = parseTimeline(snapshot.metricsTimeline).length;
-  if (timelineCount > 0) {
-    parts.push(`${timelineCount} metric transition intervals are embedded in this snapshot.`);
+  if (latest && Object.keys(latest).length > 0) {
+    lines.push(
+      `Latest metrics: CPU ${formatPercent(latest.cpuUsage)}, Memory ${formatPercent(latest.memoryUsage)}, Disk ${formatPercent(latest.diskUsage)}${latest.isValid === false ? ' (metrics unavailable)' : ''}`
+    );
   }
 
-  return parts.join(' ');
+  if (primaryAnomaly.metricName) {
+    lines.push(
+      `Primary anomaly: ${primaryAnomaly.metricName} ${primaryAnomaly.status || 'ACTIVE'} · ${primaryAnomaly.triggerType || 'threshold/spike'} · baseline ${formatPercent(primaryAnomaly.baselineValue)} · peak ${formatPercent(primaryAnomaly.peakValue)} · current ${formatPercent(primaryAnomaly.currentValue)}`
+    );
+  }
+
+  if (fullTimeline.length > 0) {
+    lines.push('Evidence timeline:');
+    fullTimeline.forEach((item, index) => {
+      lines.push(`#${index + 1} ${formatTimestamp(item.collectedAt)} · ${item.type}`);
+      lines.push(`   ${item.label}`);
+    });
+  }
+
+  lines.push('Your prompt will be sent with the full structured snapshot payload in the background.');
+  return lines.join('\n');
 }
 
-function parseTimeline(value) {
-  if (!value) {
-    return [];
+function formatPercent(value) {
+  const parsed = Number.parseFloat(value);
+  if (Number.isNaN(parsed)) {
+    return 'unavailable';
   }
-
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+  return `${Math.round(parsed * 10) / 10}%`;
 }
 
 function getUserInitials(value) {

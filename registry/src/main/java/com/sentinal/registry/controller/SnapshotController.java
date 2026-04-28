@@ -1,9 +1,12 @@
 package com.sentinal.registry.controller;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sentinal.registry.model.snapshot.IncidentSnapshot;
 import com.sentinal.registry.repository.IncidentSnapshotRepository;
 import com.sentinal.registry.repository.InstanceRepository;
 import com.sentinal.registry.service.ai.AiAnalysisService;
+import com.sentinal.registry.service.metrics.IncidentSnapshotService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -23,6 +26,8 @@ public class SnapshotController {
     private final IncidentSnapshotRepository incidentRepository;
     private final InstanceRepository instanceRepository;
     private final AiAnalysisService aiAnalysisService;
+    private final IncidentSnapshotService incidentSnapshotService;
+    private final ObjectMapper objectMapper;
 
     @GetMapping("/{id}/incidents")
     public ResponseEntity<?> getIncidents(@PathVariable Long id,
@@ -31,8 +36,10 @@ public class SnapshotController {
                 .filter(i -> i.getUser().getUsername().equals(userDetails.getUsername()))
                 .map(i -> {
                     List<IncidentSnapshot> incidents = incidentRepository
-                            .findByInstanceEntity_InstanceIdAndResolvedAtIsNotNullOrderByStartedAtDesc(
-                                    i.getInstanceId());
+                            .findTop20ByInstanceEntity_IdOrderByStartedAtDesc(i.getId())
+                            .stream()
+                            .filter(this::shouldExposeSnapshot)
+                            .toList();
                     return ResponseEntity.ok(incidents);
                 })
                 .orElse(ResponseEntity.notFound().build());
@@ -44,7 +51,10 @@ public class SnapshotController {
         return instanceRepository.findById(id)
                 .filter(i -> i.getUser().getUsername().equals(userDetails.getUsername()))
                 .map(i -> incidentRepository
-                        .findFirstByInstanceEntity_InstanceIdAndResolvedAtIsNullOrderByStartedAtDesc(i.getInstanceId())
+                        .findFirstByInstanceEntity_IdAndIncidentStatusOrderByStartedAtDesc(
+                                i.getId(),
+                                com.sentinal.registry.model.snapshot.IncidentLifecycleStatus.ACTIVE
+                        )
                         .<ResponseEntity<?>>map(ResponseEntity::ok)
                         .orElse(ResponseEntity.noContent().build()))
                 .orElse(ResponseEntity.notFound().build());
@@ -56,8 +66,25 @@ public class SnapshotController {
                                           @AuthenticationPrincipal UserDetails userDetails) {
         return instanceRepository.findById(id)
                 .filter(i -> i.getUser().getUsername().equals(userDetails.getUsername()))
-                .flatMap(i -> incidentRepository.findById(incidentId))
-                .map(incident -> ResponseEntity.ok(incident.getAiContext()))
+                .flatMap(i -> incidentRepository.findById(incidentId)
+                        .filter(incident -> incident.getInstanceEntity() != null
+                                && incident.getInstanceEntity().getId().equals(i.getId())))
+                .flatMap(incident -> aiAnalysisService.buildAiSnapshot(id, incidentId))
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/{id}/incidents/{incidentId}/ai-snapshot")
+    public ResponseEntity<?> getAiSnapshot(@PathVariable Long id,
+                                           @PathVariable Long incidentId,
+                                           @AuthenticationPrincipal UserDetails userDetails) {
+        return instanceRepository.findById(id)
+                .filter(i -> i.getUser().getUsername().equals(userDetails.getUsername()))
+                .flatMap(i -> incidentRepository.findById(incidentId)
+                        .filter(incident -> incident.getInstanceEntity() != null
+                                && incident.getInstanceEntity().getId().equals(i.getId())))
+                .flatMap(incident -> aiAnalysisService.buildAiSnapshot(id, incidentId))
+                .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
 
@@ -97,6 +124,10 @@ public class SnapshotController {
                         incident.setAiAnalysis(response.getCombinedAnalysis());
                         incident.setAiSummary(response.getCombinedAnalysis());
                         incidentRepository.save(incident);
+                        incidentSnapshotService.onAiAnalysisCreated(
+                                incident,
+                                "AI analysis generated for incident " + incident.getId()
+                        );
                         return ResponseEntity.ok(response);
                     } catch (Exception e) {
                         return ResponseEntity.status(500)
@@ -113,5 +144,57 @@ public class SnapshotController {
                 "available", available,
                 "message", available ? "AI service is available" : "AI service is not available"
         ));
+    }
+
+    private boolean shouldExposeSnapshot(IncidentSnapshot snapshot) {
+        if (snapshot.getSourceAnomalyId() == null) {
+            return true;
+        }
+
+        String rawContext = snapshot.getAiContext();
+        if (rawContext == null || rawContext.isBlank()) {
+            return true;
+        }
+
+        try {
+            Map<String, Object> context = objectMapper.readValue(rawContext, new TypeReference<>() {});
+            Object anomaliesValue = context.get("activeAnomalies");
+            if (!(anomaliesValue instanceof List<?> anomalies) || anomalies.isEmpty()) {
+                return true;
+            }
+            Object first = anomalies.get(0);
+            if (!(first instanceof Map<?, ?> anomaly)) {
+                return true;
+            }
+
+            Object metricNameValue = anomaly.get("metricName");
+            String metricName = metricNameValue != null ? String.valueOf(metricNameValue) : "CPU";
+            double maxValue = Math.max(
+                    parseDouble(anomaly.get("peakValue")),
+                    Math.max(parseDouble(anomaly.get("startValue")), parseDouble(anomaly.get("currentValue")))
+            );
+            return switch (metricName) {
+                case "CPU" -> maxValue >= 25.0;
+                case "MEMORY" -> maxValue >= 70.0;
+                case "DISK" -> maxValue >= 80.0;
+                default -> maxValue > 0.0;
+            };
+        } catch (Exception ignored) {
+            return true;
+        }
+    }
+
+    private double parseDouble(Object value) {
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        if (value == null) {
+            return 0.0;
+        }
+        try {
+            return Double.parseDouble(value.toString());
+        } catch (NumberFormatException ignored) {
+            return 0.0;
+        }
     }
 }

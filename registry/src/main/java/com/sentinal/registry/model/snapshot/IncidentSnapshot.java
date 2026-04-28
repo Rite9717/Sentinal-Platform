@@ -29,6 +29,15 @@ public class IncidentSnapshot
     @Enumerated(EnumType.STRING)
     private MonitorState status;
 
+    @Enumerated(EnumType.STRING)
+    private IncidentLifecycleStatus incidentStatus;
+
+    @Enumerated(EnumType.STRING)
+    private MonitorState startState;
+
+    @Enumerated(EnumType.STRING)
+    private MonitorState finalState;
+
     private String severity;
     private LocalDateTime startedAt;
     private LocalDateTime resolvedAt;
@@ -38,6 +47,8 @@ public class IncidentSnapshot
     private String triggerReason;
 
     private Long lastGoodSnapshotId;
+    private Long sourceAnomalyId;
+    private Integer metricSampleCount;
 
     @Enumerated(EnumType.STRING)
     private MonitorState resolution;

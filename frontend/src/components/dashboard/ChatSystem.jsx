@@ -7,6 +7,7 @@ function ChatSystem({
   selectedMessages,
   snapshots,
   selectedSnapshot,
+  selectedSnapshotDetails,
   selectedSnapshotId,
   snapshotsLoading,
   snapshotSyncedAt,
@@ -26,7 +27,10 @@ function ChatSystem({
   formatTimestamp,
 }) {
   const selectedTone = getStateTone(selectedInstance?.state);
-  const timeline = useMemo(() => parseTimeline(selectedSnapshot?.metricsTimeline), [selectedSnapshot?.metricsTimeline]);
+  const timeline = useMemo(
+    () => parseStructuredTimeline(selectedSnapshotDetails, selectedSnapshot?.metricsTimeline),
+    [selectedSnapshotDetails, selectedSnapshot?.metricsTimeline]
+  );
   const timelineCount = timeline.length;
   const hasSelectedSnapshot = Boolean(selectedSnapshot);
   const [snapshotView, setSnapshotView] = useState(hasSelectedSnapshot ? 'detail' : 'browser');
@@ -157,10 +161,10 @@ function ChatSystem({
                     <p className="text-sm font-medium text-[#111827]">Snapshot metadata</p>
                     <div className="mt-4 space-y-3">
                       <InlineStat label="Snapshot" value={selectedSnapshot ? `#${selectedSnapshot.id}` : 'None'} />
-                      <InlineStat label="Started" value={formatTimestamp(selectedSnapshot?.startedAt)} />
+                      <InlineStat label="Started" value={formatTimestamp(selectedSnapshotDetails?.activeIncident?.startedAt || selectedSnapshot?.startedAt)} />
                       <InlineStat label="Ended" value={formatTimestamp(selectedSnapshot?.resolvedAt)} />
-                      <InlineStat label="Resolution" value={selectedSnapshot?.resolution || selectedSnapshot?.status || 'Open'} />
-                      <InlineStat label="Stored AI" value={selectedSnapshot?.aiAnalysis ? 'Available' : 'Not generated'} />
+                      <InlineStat label="Resolution" value={selectedSnapshot?.resolution || selectedSnapshotDetails?.activeIncident?.status || selectedSnapshot?.status || 'Open'} />
+                      <InlineStat label="Anomalies" value={`${selectedSnapshotDetails?.activeAnomalies?.length || 0}`} />
                     </div>
                   </div>
                 </div>
@@ -233,7 +237,7 @@ function ChatSystem({
                   <div className="flex items-center justify-between border-b border-black/5 px-5 py-4">
                     <div>
                       <p className="text-sm font-medium text-[#111827]">Conversation</p>
-                      <p className="mt-1 text-sm text-[#7b817c]">{analysisLoading ? 'Sentinal AI is analysing the selected snapshot...' : 'Analysis starts only when you press Send.'}</p>
+                      <p className="mt-1 text-sm text-[#7b817c]">{analysisLoading ? 'Sentinal AI is analysing the selected snapshot...' : 'The selected snapshot is attached automatically when you press Send.'}</p>
                     </div>
                     <span className={`rounded-full px-3 py-1 text-[10px] uppercase tracking-[0.14em] ${analysisLoading ? 'bg-[#0f6b3d] text-white' : 'bg-[#eef2ed] text-[#7b817c]'}`}>
                       {analysisLoading ? 'Running' : 'Idle'}
@@ -295,7 +299,7 @@ function ChatSystem({
                 <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
                     <p className="text-sm font-medium text-[#111827]">AI task</p>
-                    <p className="mt-1 text-sm text-[#7b817c]">Use the default, pick a preset, or edit the instruction before sending.</p>
+                    <p className="mt-1 text-sm text-[#7b817c]">Use the default, pick a preset, or edit the instruction. The selected snapshot payload goes with it.</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {taskPresets.map((preset) => (
@@ -433,7 +437,7 @@ function InlineStat({ label, value }) {
 }
 
 function TimelineRow({ entry, index, formatTimestamp }) {
-  const state = entry.state || entry.instanceState || 'UNKNOWN';
+  const state = entry.state || entry.instanceState || entry.eventType || 'UNKNOWN';
   const stamp = formatTimestamp(entry.timestamp || entry.time || entry.collectedAt);
   const note = entry.note || entry.message || 'Transition captured in lifecycle timeline';
 
@@ -449,6 +453,42 @@ function TimelineRow({ entry, index, formatTimestamp }) {
   );
 }
 
+function parseStructuredTimeline(snapshotDetails, legacyTimelineValue) {
+  if (snapshotDetails && typeof snapshotDetails === 'object') {
+    const eventRows = Array.isArray(snapshotDetails.incidentEvents)
+      ? snapshotDetails.incidentEvents.map((event) => ({
+          eventType: event.eventType,
+          state: event.eventType,
+          collectedAt: event.createdAt,
+          message: event.message || 'Incident event',
+        }))
+      : [];
+
+    const anomalyRows = Array.isArray(snapshotDetails.activeAnomalies)
+      ? snapshotDetails.activeAnomalies.flatMap((anomaly) =>
+          (Array.isArray(anomaly.snapshots) ? anomaly.snapshots : []).map((snapshot) => ({
+            state: snapshot.type,
+            collectedAt: snapshot.collectedAt,
+            message: `${anomaly.metricName || 'Metric'} ${snapshot.type || 'snapshot'} · CPU ${formatMetricValue(snapshot.cpuUsage)}`,
+          }))
+        )
+      : [];
+
+    const combined = [...eventRows, ...anomalyRows]
+      .filter((row) => row.collectedAt || row.message)
+      .sort((left, right) => {
+        const leftTs = left.collectedAt ? new Date(left.collectedAt).getTime() : 0;
+        const rightTs = right.collectedAt ? new Date(right.collectedAt).getTime() : 0;
+        return leftTs - rightTs;
+      });
+
+    if (combined.length > 0) {
+      return combined;
+    }
+  }
+  return parseTimeline(legacyTimelineValue);
+}
+
 function parseTimeline(value) {
   if (!value) {
     return [];
@@ -459,6 +499,14 @@ function parseTimeline(value) {
   } catch {
     return [];
   }
+}
+
+function formatMetricValue(value) {
+  const parsed = Number.parseFloat(value);
+  if (Number.isNaN(parsed)) {
+    return 'unavailable';
+  }
+  return `${Math.round(parsed * 10) / 10}%`;
 }
 
 function ArrowLeftIcon({ className = 'h-4 w-4' }) {

@@ -63,6 +63,16 @@ export const analyseIncidentSnapshot = async ({ instanceId, snapshotId, prompt }
     throw error;
   }
 };
+
+export const getIncidentAiSnapshot = async ({ instanceId, snapshotId }) => {
+  try {
+    const response = await apiClient.get(`/api/instances/${instanceId}/incidents/${snapshotId}/ai-snapshot`);
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching AI snapshot payload:', error);
+    throw error;
+  }
+};
 /**
  * Delete a registered instance
  * @param {number} instanceId - The instance ID to delete
@@ -97,6 +107,7 @@ const ec2Service = {
   getUserInstances,
   getInstanceMetrics,
   getInstanceSnapshots,
+  getIncidentAiSnapshot,
   analyseIncidentSnapshot,
   deleteInstance,
   resetInstance

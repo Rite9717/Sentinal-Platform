@@ -1,6 +1,7 @@
 package com.sentinal.registry.repository;
 
 import com.sentinal.registry.model.snapshot.IncidentSnapshot;
+import com.sentinal.registry.model.snapshot.IncidentLifecycleStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
@@ -29,4 +30,16 @@ public interface IncidentSnapshotRepository extends JpaRepository<IncidentSnapsh
             WHERE i.lastGoodSnapshotId IS NOT NULL
             """)
     List<Long> findDistinctLastGoodSnapshotIds();
+
+    Optional<IncidentSnapshot> findFirstByInstanceEntity_IdAndIncidentStatusOrderByStartedAtDesc(
+            Long instanceId,
+            IncidentLifecycleStatus incidentStatus
+    );
+
+    Optional<IncidentSnapshot> findFirstBySourceAnomalyIdAndIncidentStatusOrderByStartedAtDesc(
+            Long sourceAnomalyId,
+            IncidentLifecycleStatus incidentStatus
+    );
+
+    List<IncidentSnapshot> findTop20ByInstanceEntity_IdOrderByStartedAtDesc(Long instanceId);
 }

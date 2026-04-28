@@ -3,8 +3,12 @@ package com.sentinal.registry.service.metrics;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sentinal.registry.model.instances.InstanceEntity;
 import com.sentinal.registry.model.instances.MonitorState;
+import com.sentinal.registry.model.snapshot.IncidentEvent;
+import com.sentinal.registry.model.snapshot.IncidentEventType;
+import com.sentinal.registry.model.snapshot.IncidentLifecycleStatus;
 import com.sentinal.registry.model.snapshot.IncidentSnapshot;
 import com.sentinal.registry.model.snapshot.MetricsInterval;
+import com.sentinal.registry.repository.IncidentEventRepository;
 import com.sentinal.registry.repository.IncidentSnapshotRepository;
 import com.sentinal.registry.service.mail.MailService;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +27,7 @@ import java.util.Map;
 public class IncidentSnapshotService {
 
     private final IncidentSnapshotRepository snapshotRepository;
+    private final IncidentEventRepository incidentEventRepository;
     private final ObjectMapper objectMapper;
     private final MailService mailService;
 
@@ -53,6 +58,9 @@ public class IncidentSnapshotService {
 
         IncidentSnapshot incident = IncidentSnapshot.builder()
                 .instanceEntity(instance)
+                .incidentStatus(IncidentLifecycleStatus.ACTIVE)
+                .startState(status)
+                .finalState(null)
                 .status(status)
                 .severity(resolveSeverity(status))
                 .startedAt(now)
@@ -68,6 +76,15 @@ public class IncidentSnapshotService {
                 .build();
 
         snapshotRepository.save(incident);
+        recordEvent(
+                incident,
+                IncidentEventType.SUSPECT_STARTED,
+                parseFromState(stateTransition),
+                status,
+                null,
+                null,
+                triggerReason
+        );
         log.info("[INCIDENT OPEN] instance={} status={} transition={} lastGoodSnapshotId={}",
                 instanceId, status, stateTransition, lastGoodSnapshotId);
     }
@@ -92,6 +109,19 @@ public class IncidentSnapshotService {
                     incident.setTriggerReason(note);
                     incident.setMetricsTimeline(toJson(timeline));
                     snapshotRepository.save(incident);
+
+                    IncidentEventType eventType = resolveEventTypeForState(state);
+                    if (eventType != null) {
+                        recordEvent(
+                                incident,
+                                eventType,
+                                parseFromState(stateTransition),
+                                state,
+                                null,
+                                null,
+                                note
+                        );
+                    }
                     log.info("[INCIDENT INTERVAL] instance={} state={} transition={} note={}",
                             instance.getInstanceId(), state, stateTransition, note);
                 }, () -> log.warn("No open incident for {} — cannot append interval", instance.getInstanceId()));
@@ -124,15 +154,26 @@ public class IncidentSnapshotService {
                     }
 
                     incident.setStatus(incidentStatus);
+                    incident.setIncidentStatus(IncidentLifecycleStatus.RESOLVED);
                     incident.setSeverity(resolveSeverity(incidentStatus));
                     incident.setResolvedAt(now);
                     incident.setResolution(finalState);
+                    incident.setFinalState(finalState);
                     incident.setStateTransition(stateTransition);
                     incident.setTriggerReason(note);
                     incident.setMetricsTimeline(toJson(timeline));
                     incident.setAiContext(buildAiContext(instance, incident, timeline, finalState));
 
                     snapshotRepository.save(incident);
+                    recordEvent(
+                            incident,
+                            finalState == MonitorState.TERMINATED ? IncidentEventType.TERMINATED : IncidentEventType.RECOVERED,
+                            parseFromState(stateTransition),
+                            finalState,
+                            null,
+                            null,
+                            note
+                    );
                     log.info("[INCIDENT CLOSED] instance={} status={} resolution={} intervals={}",
                             instance.getInstanceId(), incidentStatus, finalState, timeline.size());
 
@@ -140,6 +181,35 @@ public class IncidentSnapshotService {
                         mailService.sendTerminationAlert(instance, incident);
                     }
                 }, () -> log.warn("No open incident for {} — cannot close", instance.getInstanceId()));
+    }
+
+    public void onAnomalyLinked(InstanceEntity instance, Long anomalyId, String message) {
+        snapshotRepository
+                .findFirstByInstanceEntity_InstanceIdAndResolvedAtIsNullOrderByStartedAtDesc(instance.getInstanceId())
+                .ifPresent(incident -> recordEvent(
+                        incident,
+                        IncidentEventType.ANOMALY_LINKED,
+                        null,
+                        incident.getStatus(),
+                        null,
+                        anomalyId,
+                        message
+                ));
+    }
+
+    public void onAiAnalysisCreated(IncidentSnapshot incident, String message) {
+        if (incident == null) {
+            return;
+        }
+        recordEvent(
+                incident,
+                IncidentEventType.AI_ANALYSIS_CREATED,
+                null,
+                incident.getStatus(),
+                null,
+                null,
+                message
+        );
     }
 
     private MetricsInterval buildInterval(MonitorState state, String note, Map<String, Object> metrics) {
@@ -272,5 +342,51 @@ public class IncidentSnapshotService {
 
     private String formatOrUnavailable(LocalDateTime value) {
         return value != null ? value.format(FMT) : "unavailable";
+    }
+
+    private IncidentEventType resolveEventTypeForState(MonitorState state) {
+        if (state == null) {
+            return null;
+        }
+        return switch (state) {
+            case QUARANTINED -> IncidentEventType.QUARANTINED;
+            case SUSPECT -> IncidentEventType.SUSPECT_STARTED;
+            case RECOVERED, UP -> IncidentEventType.RECOVERED;
+            case TERMINATED -> IncidentEventType.TERMINATED;
+        };
+    }
+
+    private MonitorState parseFromState(String transition) {
+        if (transition == null || !transition.contains("->")) {
+            return null;
+        }
+        String left = transition.split("->")[0].trim();
+        try {
+            return MonitorState.valueOf(left);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private void recordEvent(
+            IncidentSnapshot incident,
+            IncidentEventType eventType,
+            MonitorState fromState,
+            MonitorState toState,
+            Long snapshotId,
+            Long anomalyId,
+            String message
+    ) {
+        incidentEventRepository.save(IncidentEvent.builder()
+                .incident(incident)
+                .instanceEntity(incident.getInstanceEntity())
+                .eventType(eventType)
+                .fromState(fromState)
+                .toState(toState)
+                .snapshotId(snapshotId)
+                .anomalyId(anomalyId)
+                .message(message)
+                .createdAt(LocalDateTime.now())
+                .build());
     }
 }

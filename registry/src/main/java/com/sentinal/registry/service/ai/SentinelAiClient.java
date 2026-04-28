@@ -90,6 +90,7 @@ public class SentinelAiClient {
             payload.put("instance_id", instanceId);
             payload.put("user_question", request.getAnalysisTask());
             payload.put("snapshot_id", request.getSelectedSnapshotId());
+            payload.put("agent_context", request.getAgentContext());
 
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(payload, headers);
 
