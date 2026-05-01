@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 
 function ChatSystem({
   instances,
@@ -32,21 +32,10 @@ function ChatSystem({
     [selectedSnapshotDetails, selectedSnapshot?.metricsTimeline]
   );
   const timelineCount = timeline.length;
-  const hasSelectedSnapshot = Boolean(selectedSnapshot);
-  const [snapshotView, setSnapshotView] = useState(hasSelectedSnapshot ? 'detail' : 'browser');
-  const isDetailView = snapshotView === 'detail' && Boolean(selectedSnapshot);
-
-  useEffect(() => {
-    setSnapshotView(hasSelectedSnapshot ? 'detail' : 'browser');
-  }, [hasSelectedSnapshot]);
-
-  useEffect(() => {
-    setSnapshotView('browser');
-  }, [selectedInstance?.id]);
+  const isDetailView = Boolean(selectedSnapshot);
 
   const openSnapshot = (snapshotId) => {
     onSelectSnapshot(snapshotId);
-    setSnapshotView('detail');
   };
 
   return (
@@ -104,13 +93,13 @@ function ChatSystem({
                   <div>
                     <button
                       type="button"
-                      onClick={() => setSnapshotView('browser')}
-                      className="inline-flex items-center gap-2 rounded-full bg-[#eef2ed] px-3 py-2 text-[11px] font-medium uppercase tracking-[0.14em] text-[#0f6b3d] transition-all duration-200 hover:bg-[#dcebe0]"
+                      onClick={() => onSelectSnapshot(null)}
+                      className="mb-4 inline-flex items-center gap-2 rounded-full bg-[#eef2ed] px-3 py-2 text-[11px] font-medium uppercase tracking-[0.14em] text-[#0f6b3d] transition-all duration-200 hover:bg-[#dcebe0]"
                     >
                       <ArrowLeftIcon className="h-3.5 w-3.5" />
-                      All snapshots
+                      Change snapshot
                     </button>
-                    <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-3">
                       <h3 className="text-4xl font-semibold text-[#111827]">{selectedInstance?.nickname || selectedInstance?.instanceId || 'No instance selected'}</h3>
                       <span className={`rounded-full bg-[#eef2ed] px-3 py-1 text-[11px] uppercase tracking-[0.14em] ${selectedTone.text}`}>
                         {selectedInstance?.state || 'Offline'}
@@ -230,17 +219,23 @@ function ChatSystem({
             )}
           </div>
 
-          {isDetailView ? (
+          {selectedInstance && (
             <>
               <div className="min-h-0 overflow-hidden rounded-[32px] bg-white shadow-[0_18px_55px_rgba(15,23,42,0.06)]">
                 <div className="flex h-full min-h-[360px] flex-col">
                   <div className="flex items-center justify-between border-b border-black/5 px-5 py-4">
                     <div>
                       <p className="text-sm font-medium text-[#111827]">Conversation</p>
-                      <p className="mt-1 text-sm text-[#7b817c]">{analysisLoading ? 'Sentinal AI is analysing the selected snapshot...' : 'The selected snapshot is attached automatically when you press Send.'}</p>
+                      <p className="mt-1 text-sm text-[#7b817c]">
+                        {analysisLoading
+                          ? 'Sentinal AI is gathering tool context...'
+                          : selectedSnapshot
+                            ? 'Snapshot mode: the selected snapshot is attached automatically when you press Send.'
+                            : 'Instance mode: ask about current health, recent anomalies, or history without selecting a snapshot.'}
+                      </p>
                     </div>
                     <span className={`rounded-full px-3 py-1 text-[10px] uppercase tracking-[0.14em] ${analysisLoading ? 'bg-[#0f6b3d] text-white' : 'bg-[#eef2ed] text-[#7b817c]'}`}>
-                      {analysisLoading ? 'Running' : 'Idle'}
+                      {analysisLoading ? 'Running' : selectedSnapshot ? `Snapshot #${selectedSnapshot.id}` : 'Instance mode'}
                     </span>
                   </div>
 
@@ -248,7 +243,9 @@ function ChatSystem({
                     <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
                       {selectedMessages.length === 0 && (
                         <div className="rounded-3xl border border-dashed border-black/10 bg-[#f7f8f4] px-5 py-8 text-center text-sm leading-7 text-[#7b817c]">
-                          Send the default task to generate the first AI analysis for this snapshot.
+                          {selectedSnapshot
+                            ? 'Send the default task to generate the first AI analysis for this snapshot.'
+                            : 'Ask Sentinal AI about this instance. It will choose the needed read-only tools automatically.'}
                         </div>
                       )}
 
@@ -262,6 +259,11 @@ function ChatSystem({
                             )}
                             <div className={`relative rounded-3xl px-4 py-4 text-sm leading-7 transition-all duration-200 ${message.sender === 'user' ? 'bg-[#0f6b3d] text-white' : 'bg-[#f7f8f4] text-[#111827]'}`}>
                               <span className="block whitespace-pre-wrap">{message.text}</span>
+                              {message.sender === 'ai' && Array.isArray(message.toolsUsed) && message.toolsUsed.length > 0 && (
+                                <span className="mt-3 block border-t border-black/5 pt-2 text-[11px] uppercase tracking-[0.12em] text-[#7b817c]">
+                                  Tools used: {message.toolsUsed.join(', ')}
+                                </span>
+                              )}
                               <span className="pointer-events-none absolute -bottom-6 right-2 text-[11px] uppercase tracking-[0.14em] text-[#7b817c] opacity-0 transition-opacity duration-200 group-hover:opacity-100">
                                 {message.timestamp}
                               </span>
@@ -299,7 +301,11 @@ function ChatSystem({
                 <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
                     <p className="text-sm font-medium text-[#111827]">AI task</p>
-                    <p className="mt-1 text-sm text-[#7b817c]">Use the default, pick a preset, or edit the instruction. The selected snapshot payload goes with it.</p>
+                    <p className="mt-1 text-sm text-[#7b817c]">
+                      {selectedSnapshot
+                        ? 'Use the default, pick a preset, or edit the instruction. The selected snapshot payload goes with it.'
+                        : 'Ask a live instance question. The agent will fetch only the tools required by your prompt.'}
+                    </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {taskPresets.map((preset) => (
@@ -320,20 +326,20 @@ function ChatSystem({
                         }
                       }}
                       rows={3}
-                      placeholder="Select an instance and lifecycle snapshot, then ask SentinelAI to analyse the incident timeline..."
+                      placeholder={selectedSnapshot ? 'Ask Sentinal AI to analyse this incident timeline...' : 'Ask about current health, recent spikes, recurring incidents, or next actions...'}
                       className="min-h-[112px] w-full resize-none rounded-3xl border border-black/10 bg-[#f7f8f4] px-4 py-4 text-sm leading-7 text-[#111827] outline-none transition-all duration-200 placeholder:text-[#9ca3af] focus:border-[#0f6b3d]/35 focus:bg-white"
                     />
                     <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] uppercase tracking-[0.14em] text-[#7b817c]">
                       <span>{tokenEstimate} estimated tokens</span>
                       <span className="h-1 w-1 rounded-full bg-slate-700" />
-                      <span>{selectedSnapshot ? `Snapshot #${selectedSnapshot.id}` : 'No snapshot selected'}</span>
+                      <span>{selectedSnapshot ? `Snapshot #${selectedSnapshot.id}` : 'Instance mode'}</span>
                     </div>
                   </div>
 
                   <button
                     type="button"
                     onClick={onSend}
-                    disabled={!selectedSnapshot || analysisLoading}
+                    disabled={!selectedInstance || analysisLoading}
                     aria-label="Send analysis request"
                     className="group relative flex h-14 shrink-0 items-center justify-center gap-3 overflow-hidden rounded-2xl bg-[#0f6b3d] px-7 text-sm font-medium uppercase tracking-[0.14em] text-white shadow-[0_16px_36px_rgba(15,107,61,0.18)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#0b5a33] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 lg:h-[112px]"
                   >
@@ -344,37 +350,6 @@ function ChatSystem({
                 </div>
               </div>
             </>
-          ) : (
-            <div className="rounded-[32px] bg-white p-8 shadow-[0_18px_55px_rgba(15,23,42,0.06)]">
-              <p className="text-sm font-medium text-[#111827]">Snapshot View</p>
-              <p className="mt-2 max-w-3xl text-sm leading-7 text-[#7b817c]">
-                Open any lifecycle snapshot to move into its dedicated analysis screen. Each snapshot screen has its own timeline context and AI thread input.
-              </p>
-              <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {snapshots.map((snapshot) => (
-                  <button
-                    key={`open-${snapshot.id}`}
-                    type="button"
-                    onClick={() => openSnapshot(snapshot.id)}
-                    className="rounded-3xl border border-black/5 bg-[#f7f8f4] px-4 py-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-[#0f6b3d]/25 hover:bg-white"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium text-[#111827]">Snapshot #{snapshot.id}</span>
-                      <span className="rounded-full bg-white px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-[#7b817c]">
-                        {snapshot.resolution || snapshot.status || 'Open'}
-                      </span>
-                    </div>
-                    <p className="mt-3 text-xs uppercase tracking-[0.14em] text-[#7b817c]">{formatTimestamp(snapshot.startedAt)}</p>
-                    <p className="mt-1 text-xs text-[#9ca3af]">{parseTimeline(snapshot.metricsTimeline).length} intervals</p>
-                  </button>
-                ))}
-                {snapshots.length === 0 && (
-                  <div className="col-span-full rounded-2xl border border-dashed border-black/10 bg-[#f7f8f4] px-4 py-8 text-center text-sm text-[#7b817c]">
-                    No snapshots available for this instance yet.
-                  </div>
-                )}
-              </div>
-            </div>
           )}
         </div>
       </div>

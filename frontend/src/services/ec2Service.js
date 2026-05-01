@@ -52,14 +52,28 @@ export const getInstanceSnapshots = async (instanceId) => {
   }
 };
 
-export const analyseIncidentSnapshot = async ({ instanceId, snapshotId, prompt }) => {
+export const analyseIncidentSnapshot = async ({ instanceId, snapshotId, prompt, chatHistory = [] }) => {
   try {
     const response = await apiClient.post(`/api/instances/${instanceId}/incidents/${snapshotId}/analyze`, {
       prompt,
+      chatHistory,
     });
     return response.data;
   } catch (error) {
     console.error('Error analysing incident snapshot:', error);
+    throw error;
+  }
+};
+
+export const analyseInstance = async ({ instanceId, prompt, chatHistory = [] }) => {
+  try {
+    const response = await apiClient.post(`/api/instances/${instanceId}/analyze`, {
+      prompt,
+      chatHistory,
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error analysing instance:', error);
     throw error;
   }
 };
@@ -109,6 +123,7 @@ const ec2Service = {
   getInstanceSnapshots,
   getIncidentAiSnapshot,
   analyseIncidentSnapshot,
+  analyseInstance,
   deleteInstance,
   resetInstance
 };

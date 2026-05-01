@@ -7,16 +7,12 @@ import lombok.NoArgsConstructor;
 
 import java.util.List;
 import java.util.Map;
-
-/**
- * Request payload for the Sentinel AI Analysis Service.
- * Matches the Python FastAPI AnalyzeRequest model.
- */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class AiAnalysisRequest {
+public class AiAnalysisRequest
+{
     private AiInstanceDetails instance;
     private Long selectedSnapshotId;
     private AiMetricsSnapshot lastGoodSnapshot;
@@ -25,4 +21,6 @@ public class AiAnalysisRequest {
     private List<AiMetricAnomaly> metricAnomalies;
     private String analysisTask;
     private Map<String, Object> agentContext;
+    private List<String> allowedTools;
+    private List<Map<String, String>> chatHistory;
 }

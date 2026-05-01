@@ -26,6 +26,14 @@ DEFAULT_PROMPT = (
     "configuration remediation steps."
 )
 
+DEFAULT_ALLOWED_TOOLS = [
+    "get_instance",
+    "get_latest_metrics",
+    "get_snapshot",
+    "get_recent_snapshots",
+    "get_recent_anomalies",
+]
+
 
 @dataclass
 class BackendPayloadReplayTest:
@@ -33,6 +41,7 @@ class BackendPayloadReplayTest:
     instance_id: str
     snapshot_id: int
     user_question: str
+    allowed_tools: list[str]
     timeout_seconds: int = 260
     attempts: int = 1
 
@@ -47,6 +56,8 @@ class BackendPayloadReplayTest:
             "instance_id": self.instance_id,
             "snapshot_id": self.snapshot_id,
             "user_question": self.user_question,
+            "agent_context": {},
+            "allowed_tools": self.allowed_tools,
         }
 
     def run(self) -> None:
@@ -86,6 +97,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--instance-id", required=True, help="EC2 instance id")
     parser.add_argument("--snapshot-id", required=True, type=int, help="Incident snapshot id")
     parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="Prompt sent as user_question")
+    parser.add_argument(
+        "--allowed-tool",
+        action="append",
+        dest="allowed_tools",
+        help="Allowed tool name. Can be provided multiple times. Defaults to the backend allowlist.",
+    )
     parser.add_argument("--timeout", default=260, type=int, help="HTTP timeout in seconds")
     parser.add_argument("--attempts", default=1, type=int, help="How many times to replay")
     return parser.parse_args()
@@ -98,6 +115,7 @@ def main() -> None:
         instance_id=args.instance_id,
         snapshot_id=args.snapshot_id,
         user_question=args.prompt,
+        allowed_tools=args.allowed_tools or DEFAULT_ALLOWED_TOOLS,
         timeout_seconds=args.timeout,
         attempts=args.attempts,
     )

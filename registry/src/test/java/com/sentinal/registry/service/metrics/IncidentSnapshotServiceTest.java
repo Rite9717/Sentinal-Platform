@@ -6,9 +6,9 @@ import com.sentinal.registry.model.instances.MonitorState;
 import com.sentinal.registry.model.snapshot.IncidentEvent;
 import com.sentinal.registry.model.snapshot.IncidentEventType;
 import com.sentinal.registry.model.snapshot.IncidentSnapshot;
-import com.sentinal.registry.repository.IncidentEventRepository;
 import com.sentinal.registry.repository.IncidentSnapshotRepository;
 import com.sentinal.registry.service.mail.MailService;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -33,7 +33,7 @@ class IncidentSnapshotServiceTest {
     private IncidentSnapshotRepository snapshotRepository;
 
     @Mock
-    private IncidentEventRepository incidentEventRepository;
+    private EntityManager entityManager;
 
     @Mock
     private MailService mailService;
@@ -44,7 +44,7 @@ class IncidentSnapshotServiceTest {
     void setUp() {
         incidentSnapshotService = new IncidentSnapshotService(
                 snapshotRepository,
-                incidentEventRepository,
+                entityManager,
                 new ObjectMapper().findAndRegisterModules(),
                 mailService
         );
@@ -76,7 +76,7 @@ class IncidentSnapshotServiceTest {
         );
 
         ArgumentCaptor<IncidentEvent> eventCaptor = ArgumentCaptor.forClass(IncidentEvent.class);
-        verify(incidentEventRepository).save(eventCaptor.capture());
+        verify(entityManager).persist(eventCaptor.capture());
         IncidentEvent event = eventCaptor.getValue();
         assertThat(event.getEventType()).isEqualTo(IncidentEventType.SUSPECT_STARTED);
         assertThat(event.getIncident()).isNotNull();
@@ -114,7 +114,7 @@ class IncidentSnapshotServiceTest {
         assertThat(closed.getFinalState()).isEqualTo(MonitorState.UP);
 
         ArgumentCaptor<IncidentEvent> eventCaptor = ArgumentCaptor.forClass(IncidentEvent.class);
-        verify(incidentEventRepository, atLeastOnce()).save(eventCaptor.capture());
+        verify(entityManager, atLeastOnce()).persist(eventCaptor.capture());
         assertThat(eventCaptor.getAllValues())
                 .anyMatch(event -> event.getEventType() == IncidentEventType.RECOVERED && event.getCreatedAt() != null);
     }

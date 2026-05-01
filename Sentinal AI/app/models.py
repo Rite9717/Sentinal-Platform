@@ -6,6 +6,8 @@ class AnalyzeInstanceRequest(BaseModel):
     user_question: Optional[str] = None
     snapshot_id: Optional[int] = None
     agent_context: Optional[Dict[str, Any]] = None
+    allowed_tools: Optional[List[str]] = None
+    chat_history: Optional[List[Dict[str, str]]] = None
 
 class AgentResponse(BaseModel):
     severity: str
@@ -13,4 +15,5 @@ class AgentResponse(BaseModel):
     evidence: List[str]
     recommended_actions: List[str]
     auto_executable: bool
+    tools_used: List[str] = []
     

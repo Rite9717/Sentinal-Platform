@@ -8,12 +8,13 @@ import com.sentinal.registry.model.snapshot.IncidentEventType;
 import com.sentinal.registry.model.snapshot.IncidentLifecycleStatus;
 import com.sentinal.registry.model.snapshot.IncidentSnapshot;
 import com.sentinal.registry.model.snapshot.MetricsInterval;
-import com.sentinal.registry.repository.IncidentEventRepository;
 import com.sentinal.registry.repository.IncidentSnapshotRepository;
 import com.sentinal.registry.service.mail.MailService;
+import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -24,10 +25,11 @@ import java.util.Map;
 @Slf4j
 @Service
 @RequiredArgsConstructor
+@Transactional
 public class IncidentSnapshotService {
 
     private final IncidentSnapshotRepository snapshotRepository;
-    private final IncidentEventRepository incidentEventRepository;
+    private final EntityManager entityManager;
     private final ObjectMapper objectMapper;
     private final MailService mailService;
 
@@ -377,7 +379,7 @@ public class IncidentSnapshotService {
             Long anomalyId,
             String message
     ) {
-        incidentEventRepository.save(IncidentEvent.builder()
+        entityManager.persist(IncidentEvent.builder()
                 .incident(incident)
                 .instanceEntity(incident.getInstanceEntity())
                 .eventType(eventType)

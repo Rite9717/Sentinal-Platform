@@ -27,12 +27,27 @@ public class AiAnalysisService {
     private final ObjectMapper objectMapper;
 
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final List<String> DEFAULT_ALLOWED_TOOLS = List.of(
+            "get_instance",
+            "get_latest_metrics",
+            "get_snapshot",
+            "get_recent_snapshots",
+            "get_recent_anomalies"
+    );
 
     public AiAnalysisResponse analyzeIncident(IncidentSnapshot incident) {
         return analyzeIncident(incident, null);
     }
 
     public AiAnalysisResponse analyzeIncident(IncidentSnapshot incident, String analysisTask) {
+        return analyzeIncident(incident, analysisTask, List.of());
+    }
+
+    public AiAnalysisResponse analyzeIncident(
+            IncidentSnapshot incident,
+            String analysisTask,
+            List<Map<String, String>> chatHistory
+    ) {
         log.info("Starting AI analysis for incident {} of instance {}",
                 incident.getId(), incident.getInstanceEntity().getInstanceId());
 
@@ -43,15 +58,31 @@ public class AiAnalysisService {
                 instance,
                 analysisTask,
                 incident.getId(),
-                structuredContext
+                structuredContext,
+                chatHistory
         );
 
         return aiClient.analyze(request);
     }
 
-    /**
-     * Triggers AI analysis for an instance asynchronously.
-     */
+    public AiAnalysisResponse analyzeInstance(
+            InstanceEntity instance,
+            String analysisTask,
+            List<Map<String, String>> chatHistory
+    ) {
+        log.info("Starting AI instance chat for instance {}", instance.getInstanceId());
+
+        AiAnalysisRequest request = buildAnalysisRequest(
+                instance,
+                analysisTask,
+                null,
+                new LinkedHashMap<>(),
+                chatHistory
+        );
+
+        return aiClient.analyze(request);
+    }
+
     public Optional<Long> analyzeInstanceAsync(InstanceEntity instance) {
         log.info("Triggering async AI analysis for instance {}", instance.getInstanceId());
 
@@ -65,7 +96,8 @@ public class AiAnalysisService {
                             instance,
                             null,
                             incident.getId(),
-                            structuredContext
+                            structuredContext,
+                            List.of()
                     );
 
                     aiClient.analyzeAsync(request).thenAccept(response -> {
@@ -87,7 +119,8 @@ public class AiAnalysisService {
             InstanceEntity instance,
             String analysisTask,
             Long selectedSnapshotId,
-            Map<String, Object> structuredContext
+            Map<String, Object> structuredContext,
+            List<Map<String, String>> chatHistory
     ) {
         return AiAnalysisRequest.builder()
                 .instance(mapInstanceDetails(instance))
@@ -98,6 +131,8 @@ public class AiAnalysisService {
                 .metricAnomalies(List.of())
                 .analysisTask(analysisTask)
                 .agentContext(structuredContext)
+                .allowedTools(DEFAULT_ALLOWED_TOOLS)
+                .chatHistory(chatHistory != null ? chatHistory : List.of())
                 .build();
     }
 

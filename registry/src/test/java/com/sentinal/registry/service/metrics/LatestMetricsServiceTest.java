@@ -2,7 +2,8 @@ package com.sentinal.registry.service.metrics;
 
 import com.sentinal.registry.model.instances.InstanceEntity;
 import com.sentinal.registry.model.snapshot.LatestMetrics;
-import com.sentinal.registry.repository.LatestMetricsRepository;
+import com.sentinal.registry.repository.InstanceRepository;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -21,7 +22,10 @@ import static org.mockito.Mockito.when;
 class LatestMetricsServiceTest {
 
     @Mock
-    private LatestMetricsRepository latestMetricsRepository;
+    private InstanceRepository instanceRepository;
+
+    @Mock
+    private EntityManager entityManager;
 
     @InjectMocks
     private LatestMetricsService latestMetricsService;
@@ -38,8 +42,8 @@ class LatestMetricsServiceTest {
         metrics.put("networkIn", 1024.0d);
         metrics.put("networkOut", 2048.0d);
 
-        when(latestMetricsRepository.findByInstanceEntity_Id(1L)).thenReturn(Optional.empty());
-        when(latestMetricsRepository.save(any(LatestMetrics.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(instanceRepository.findLatestMetricsByInstanceEntityId(1L)).thenReturn(Optional.empty());
+        when(entityManager.merge(any(LatestMetrics.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         LatestMetrics saved = latestMetricsService.upsert(instance, metrics);
 
@@ -67,8 +71,8 @@ class LatestMetricsServiceTest {
         metrics.put("reason", "Prometheus timeout");
         metrics.put("errorType", "METRICS_UNAVAILABLE");
 
-        when(latestMetricsRepository.findByInstanceEntity_Id(2L)).thenReturn(Optional.empty());
-        when(latestMetricsRepository.save(any(LatestMetrics.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(instanceRepository.findLatestMetricsByInstanceEntityId(2L)).thenReturn(Optional.empty());
+        when(entityManager.merge(any(LatestMetrics.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         LatestMetrics saved = latestMetricsService.upsert(instance, metrics);
 

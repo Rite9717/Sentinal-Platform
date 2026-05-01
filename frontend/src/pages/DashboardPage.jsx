@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import InstanceRegistrationWizard from '../components/ec2/InstanceRegistrationWizard';
 import ChatSystem from '../components/dashboard/ChatSystem';
 import {
+  analyseInstance,
   analyseIncidentSnapshot,
   deleteInstance,
   getIncidentAiSnapshot,
@@ -355,11 +356,12 @@ const DashboardPage = () => {
   };
 
   const handleSendMessage = async () => {
-    if (!selectedInstance || !selectedSnapshot || !selectedThreadKey || analysisLoading) {
+    if (!selectedInstance || !selectedThreadKey || analysisLoading) {
       return;
     }
 
     const prompt = effectiveAiTask;
+    const chatHistory = buildChatHistory(selectedMessages);
     const userMessage = {
       id: `local-user-${Date.now()}`,
       sender: 'user',
@@ -371,22 +373,29 @@ const DashboardPage = () => {
       ...current,
       [selectedThreadKey]: [...(current[selectedThreadKey] ?? []), userMessage],
     }));
+    setDraftMessage('');
     setIsTyping(true);
     setAnalysisLoading(true);
 
     try {
-      const response = await analyseIncidentSnapshot({
-        instanceId: selectedInstance.id,
-        snapshotId: selectedSnapshot.id,
-        prompt,
-      });
+      const response = selectedSnapshot
+        ? await analyseIncidentSnapshot({
+            instanceId: selectedInstance.id,
+            snapshotId: selectedSnapshot.id,
+            prompt,
+            chatHistory,
+          })
+        : await analyseInstance({
+            instanceId: selectedInstance.id,
+            prompt,
+            chatHistory,
+          });
 
       const aiMessage = {
         id: `local-ai-${Date.now()}`,
         sender: 'ai',
-        text: formatAiNarrative(
-          response.combinedAnalysis || response.remediation || response.rootCause || 'Analysis completed, but no narrative was returned.'
-        ),
+        text: formatAiResponse(response),
+        toolsUsed: response.toolsUsed || response.tools_used || [],
         timestamp: formatTimestamp(new Date().toISOString()),
       };
 
@@ -630,7 +639,7 @@ const DashboardPage = () => {
                 }}
                 onSelectSnapshot={(snapshotId) => {
                   setSelectedSnapshotId(snapshotId);
-                  if (selectedInstance?.id) {
+                  if (selectedInstance?.id && snapshotId) {
                     loadSnapshotDetails(selectedInstance.id, snapshotId);
                   }
                 }}
@@ -1217,7 +1226,47 @@ function formatAiNarrative(value) {
     return value;
   }
 
-  const severity = parsed.severity || parsed.severityLevel || 'UNKNOWN';
+  return formatAiObject(parsed);
+}
+
+function formatAiResponse(response) {
+  if (!response || typeof response !== 'object') {
+    return 'Analysis completed, but no narrative was returned.';
+  }
+
+  const parsedCombined = parseAiJsonPayload(response.combinedAnalysis || response.raw_response);
+  if (parsedCombined) {
+    return formatAiObject(parsedCombined);
+  }
+
+  const structured = {
+    severity: response.severity || response.triage,
+    root_cause: response.root_cause || response.rootCause,
+    evidence: response.evidence,
+    recommended_actions: response.recommended_actions || response.recommendedActions || response.remediation,
+    auto_executable: response.auto_executable ?? response.autoExecutable,
+  };
+
+  if (hasMeaningfulAiShape(structured)) {
+    return formatAiObject(structured);
+  }
+
+  return formatAiNarrative(
+    response.combinedAnalysis || response.raw_response || response.remediation || response.rootCause || 'Analysis completed, but no narrative was returned.'
+  );
+}
+
+function hasMeaningfulAiShape(value) {
+  const rootCause = String(value.root_cause || value.rootCause || '').trim();
+  const actions = asStringArray(value.recommended_actions || value.recommendedActions);
+  const evidence = asStringArray(value.evidence);
+  const hasFallbackRootCause = rootCause === 'No explicit root cause provided by the AI service.';
+  const hasFallbackAction = actions.length === 1 && actions[0] === 'No remediation steps were provided.';
+  return Boolean(rootCause && !hasFallbackRootCause) || evidence.length > 0 || (actions.length > 0 && !hasFallbackAction);
+}
+
+function formatAiObject(parsed) {
+  const severity = normalizeSeverity(parsed.severity || parsed.severityLevel || 'UNKNOWN');
   const rootCause = parsed.root_cause || parsed.rootCause || 'No root cause provided.';
   const evidence = asStringArray(parsed.evidence);
   const actions = asStringArray(parsed.recommended_actions || parsed.recommendedActions);
@@ -1248,6 +1297,11 @@ function formatAiNarrative(value) {
   return lines.join('\n');
 }
 
+function normalizeSeverity(value) {
+  const raw = String(value || 'UNKNOWN').trim();
+  return raw.replace(/^severity:\s*/i, '') || 'UNKNOWN';
+}
+
 function parseAiJsonPayload(value) {
   if (typeof value !== 'string') {
     return null;
@@ -1258,10 +1312,8 @@ function parseAiJsonPayload(value) {
     return null;
   }
 
-  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  const candidate = (fenced ? fenced[1] : trimmed).trim();
-
-  if (!(candidate.startsWith('{') && candidate.endsWith('}'))) {
+  const candidate = extractJsonCandidate(trimmed);
+  if (!candidate) {
     return null;
   }
 
@@ -1277,6 +1329,23 @@ function parseAiJsonPayload(value) {
   }
 }
 
+function extractJsonCandidate(value) {
+  const fenced = value.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  const raw = (fenced ? fenced[1] : value).trim();
+
+  if (raw.startsWith('{') && raw.endsWith('}')) {
+    return raw;
+  }
+
+  const firstBrace = raw.indexOf('{');
+  const lastBrace = raw.lastIndexOf('}');
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+    return null;
+  }
+
+  return raw.slice(firstBrace, lastBrace + 1).trim();
+}
+
 function asStringArray(value) {
   if (Array.isArray(value)) {
     return value.map((item) => String(item));
@@ -1288,10 +1357,21 @@ function asStringArray(value) {
 }
 
 function getSnapshotThreadKey(instanceId, snapshotId) {
-  if (!instanceId || !snapshotId) {
+  if (!instanceId) {
     return null;
   }
-  return `${instanceId}::${snapshotId}`;
+  return snapshotId ? `${instanceId}::${snapshotId}` : `${instanceId}::instance`;
+}
+
+function buildChatHistory(messages) {
+  return (messages || [])
+    .filter((message) => message.sender === 'user' || message.sender === 'ai')
+    .filter((message) => !String(message.id || '').startsWith('snapshot-meta-'))
+    .slice(-8)
+    .map((message) => ({
+      role: message.sender === 'user' ? 'user' : 'assistant',
+      content: message.text,
+    }));
 }
 
 function formatSnapshotPayloadForChat(snapshotDetails, snapshot) {

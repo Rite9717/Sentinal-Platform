@@ -2,9 +2,11 @@ package com.sentinal.registry.service.metrics;
 
 import com.sentinal.registry.model.instances.InstanceEntity;
 import com.sentinal.registry.model.snapshot.LatestMetrics;
-import com.sentinal.registry.repository.LatestMetricsRepository;
+import com.sentinal.registry.repository.InstanceRepository;
+import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.Map;
@@ -14,18 +16,20 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class LatestMetricsService {
 
-    private final LatestMetricsRepository latestMetricsRepository;
+    private final InstanceRepository instanceRepository;
+    private final EntityManager entityManager;
 
     public Optional<LatestMetrics> findByInstanceId(Long instanceId) {
-        return latestMetricsRepository.findByInstanceEntity_Id(instanceId);
+        return instanceRepository.findLatestMetricsByInstanceEntityId(instanceId);
     }
 
+    @Transactional
     public LatestMetrics upsert(InstanceEntity instance, Map<String, Object> metrics) {
         LocalDateTime now = LocalDateTime.now();
         boolean isValid = Boolean.TRUE.equals(metrics.get("isValid"));
 
-        LatestMetrics latest = latestMetricsRepository
-                .findByInstanceEntity_Id(instance.getId())
+        LatestMetrics latest = instanceRepository
+                .findLatestMetricsByInstanceEntityId(instance.getId())
                 .orElseGet(() -> LatestMetrics.builder()
                         .instanceEntity(instance)
                         .build());
@@ -41,7 +45,7 @@ public class LatestMetricsService {
         latest.setErrorMessage(isValid ? null : resolveErrorMessage(metrics));
         latest.setCollectedAt(now);
         latest.setUpdatedAt(now);
-        return latestMetricsRepository.save(latest);
+        return entityManager.merge(latest);
     }
 
     private String resolveErrorMessage(Map<String, Object> metrics) {
@@ -75,4 +79,3 @@ public class LatestMetricsService {
         return value == null ? null : value.toString();
     }
 }
-

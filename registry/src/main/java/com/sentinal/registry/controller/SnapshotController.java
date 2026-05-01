@@ -2,6 +2,7 @@ package com.sentinal.registry.controller;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sentinal.registry.dto.ai.AiChatRequest;
 import com.sentinal.registry.model.snapshot.IncidentSnapshot;
 import com.sentinal.registry.repository.IncidentSnapshotRepository;
 import com.sentinal.registry.repository.InstanceRepository;
@@ -108,9 +109,10 @@ public class SnapshotController {
     @PostMapping("/{id}/incidents/{incidentId}/analyze")
     public ResponseEntity<?> triggerAiAnalysis(@PathVariable Long id,
                                                @PathVariable Long incidentId,
-                                               @RequestBody(required = false) Map<String, String> body,
+                                               @RequestBody(required = false) AiChatRequest body,
                                                @AuthenticationPrincipal UserDetails userDetails) {
-        String prompt = body != null ? body.get("prompt") : null;
+        String prompt = body != null ? body.getPrompt() : null;
+        List<Map<String, String>> chatHistory = extractChatHistory(body);
         return instanceRepository.findById(id)
                 .filter(i -> i.getUser().getUsername().equals(userDetails.getUsername()))
                 .flatMap(i -> incidentRepository.findById(incidentId)
@@ -120,7 +122,7 @@ public class SnapshotController {
                     try {
                         log.info("Triggering AI analysis for instanceId={} incidentId={} promptChars={}",
                                 id, incidentId, prompt != null ? prompt.length() : 0);
-                        var response = aiAnalysisService.analyzeIncident(incident, prompt);
+                        var response = aiAnalysisService.analyzeIncident(incident, prompt, chatHistory);
                         incident.setAiAnalysis(response.getCombinedAnalysis());
                         incident.setAiSummary(response.getCombinedAnalysis());
                         incidentRepository.save(incident);
@@ -129,6 +131,27 @@ public class SnapshotController {
                                 "AI analysis generated for incident " + incident.getId()
                         );
                         return ResponseEntity.ok(response);
+                    } catch (Exception e) {
+                        return ResponseEntity.status(500)
+                                .body(Map.of("error", "AI analysis failed: " + e.getMessage()));
+                    }
+                })
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @PostMapping("/{id}/analyze")
+    public ResponseEntity<?> triggerInstanceAiAnalysis(@PathVariable Long id,
+                                                       @RequestBody(required = false) AiChatRequest body,
+                                                       @AuthenticationPrincipal UserDetails userDetails) {
+        String prompt = body != null ? body.getPrompt() : null;
+        List<Map<String, String>> chatHistory = extractChatHistory(body);
+        return instanceRepository.findById(id)
+                .filter(i -> i.getUser().getUsername().equals(userDetails.getUsername()))
+                .map(instance -> {
+                    try {
+                        log.info("Triggering instance AI chat for instanceId={} promptChars={}",
+                                id, prompt != null ? prompt.length() : 0);
+                        return ResponseEntity.ok(aiAnalysisService.analyzeInstance(instance, prompt, chatHistory));
                     } catch (Exception e) {
                         return ResponseEntity.status(500)
                                 .body(Map.of("error", "AI analysis failed: " + e.getMessage()));
@@ -182,6 +205,26 @@ public class SnapshotController {
         } catch (Exception ignored) {
             return true;
         }
+    }
+
+    private List<Map<String, String>> extractChatHistory(AiChatRequest body) {
+        if (body == null || body.getChatHistory() == null) {
+            return List.of();
+        }
+        return body.getChatHistory().stream()
+                .map(entry -> {
+                    java.util.Map<String, String> mapped = new java.util.LinkedHashMap<>();
+                    String role = entry.get("role");
+                    String content = entry.get("content");
+                    if (role != null && content != null) {
+                        mapped.put("role", role);
+                        mapped.put("content", content);
+                    }
+                    return mapped;
+                })
+                .filter(entry -> !entry.isEmpty())
+                .limit(10)
+                .toList();
     }
 
     private double parseDouble(Object value) {

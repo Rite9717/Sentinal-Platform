@@ -1,6 +1,8 @@
 package com.sentinal.registry.service.ai;
 
 import com.sentinal.registry.dto.ai.*;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,10 +37,12 @@ public class SentinelAiClient {
     private int timeoutMs;
 
     private final RestTemplate restTemplate;
+    private final ObjectMapper objectMapper;
 
-    public SentinelAiClient(@Qualifier("aiRestTemplate") RestTemplate restTemplate)
+    public SentinelAiClient(@Qualifier("aiRestTemplate") RestTemplate restTemplate, ObjectMapper objectMapper)
     {
         this.restTemplate = restTemplate;
+        this.objectMapper = objectMapper;
     }
 
     public CompletableFuture<AiAnalysisResponse> analyzeAsync(AiAnalysisRequest request) {
@@ -79,8 +83,8 @@ public class SentinelAiClient {
             int promptChars = request.getAnalysisTask() != null ? request.getAnalysisTask().length() : 0;
             log.info("Sending AI analysis request for instance {} to {}", 
                     instanceId, url);
-            log.info("AI request context: instanceId={}, snapshotId={}, promptChars={}",
-                    instanceId, request.getSelectedSnapshotId(), promptChars);
+            log.info("AI request context: instanceId={}, snapshotId={}, promptChars={}, allowedTools={}",
+                    instanceId, request.getSelectedSnapshotId(), promptChars, request.getAllowedTools());
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
@@ -91,6 +95,8 @@ public class SentinelAiClient {
             payload.put("user_question", request.getAnalysisTask());
             payload.put("snapshot_id", request.getSelectedSnapshotId());
             payload.put("agent_context", request.getAgentContext());
+            payload.put("allowed_tools", request.getAllowedTools());
+            payload.put("chat_history", request.getChatHistory());
 
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(payload, headers);
 
@@ -145,11 +151,17 @@ public class SentinelAiClient {
 
     private AiAnalysisResponse mapResponse(String instanceId, Map<?, ?> responseBody) {
         String rawResponse = asString(responseBody.get("raw_response"));
-        String severity = asString(responseBody.get("severity"));
-        String rootCause = asString(responseBody.get("root_cause"));
-        List<String> evidence = asStringList(responseBody.get("evidence"));
-        List<String> actions = asStringList(responseBody.get("recommended_actions"));
-        Boolean autoExecutable = asBoolean(responseBody.get("auto_executable"));
+        Map<?, ?> normalizedBody = parseRawResponse(rawResponse);
+        if (normalizedBody.isEmpty()) {
+            normalizedBody = responseBody;
+        }
+
+        String severity = asString(normalizedBody.get("severity"));
+        String rootCause = firstText(normalizedBody.get("root_cause"), normalizedBody.get("rootCause"));
+        List<String> evidence = asStringList(normalizedBody.get("evidence"));
+        List<String> actions = asStringList(firstObject(normalizedBody.get("recommended_actions"), normalizedBody.get("recommendedActions")));
+        Boolean autoExecutable = asBoolean(firstObject(normalizedBody.get("auto_executable"), normalizedBody.get("autoExecutable")));
+        List<String> toolsUsed = asStringList(firstObject(normalizedBody.get("tools_used"), normalizedBody.get("toolsUsed")));
 
         String resolvedRootCause = StringUtils.hasText(rootCause)
                 ? rootCause
@@ -157,9 +169,7 @@ public class SentinelAiClient {
         String remediation = actions.isEmpty()
                 ? "No remediation steps were provided."
                 : String.join("\n", actions);
-        String combined = StringUtils.hasText(rawResponse)
-                ? rawResponse
-                : buildCombinedNarrative(severity, resolvedRootCause, evidence, actions, autoExecutable);
+        String combined = buildCombinedNarrative(severity, resolvedRootCause, evidence, actions, autoExecutable);
         String triage = StringUtils.hasText(severity) ? "Severity: " + severity : "Analysis completed";
 
         return AiAnalysisResponse.builder()
@@ -169,7 +179,40 @@ public class SentinelAiClient {
                 .rootCause(resolvedRootCause)
                 .remediation(remediation)
                 .combinedAnalysis(combined)
+                .toolsUsed(toolsUsed)
                 .build();
+    }
+
+    private Map<?, ?> parseRawResponse(String rawResponse) {
+        String candidate = extractJsonCandidate(rawResponse);
+        if (!StringUtils.hasText(candidate)) {
+            return Map.of();
+        }
+        try {
+            return objectMapper.readValue(candidate, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            log.warn("Could not parse AI raw_response JSON: {}", e.getMessage());
+            return Map.of();
+        }
+    }
+
+    private String extractJsonCandidate(String rawResponse) {
+        if (!StringUtils.hasText(rawResponse)) {
+            return null;
+        }
+        String raw = rawResponse.trim();
+        raw = raw.replaceFirst("(?is)^```(?:json)?\\s*", "")
+                .replaceFirst("(?is)\\s*```$", "")
+                .trim();
+        if (raw.startsWith("{") && raw.endsWith("}")) {
+            return raw;
+        }
+        int first = raw.indexOf('{');
+        int last = raw.lastIndexOf('}');
+        if (first < 0 || last <= first) {
+            return null;
+        }
+        return raw.substring(first, last + 1).trim();
     }
 
     private String buildCombinedNarrative(
@@ -212,6 +255,15 @@ public class SentinelAiClient {
         return value != null ? String.valueOf(value) : null;
     }
 
+    private String firstText(Object first, Object second) {
+        String firstValue = asString(first);
+        return StringUtils.hasText(firstValue) ? firstValue : asString(second);
+    }
+
+    private Object firstObject(Object first, Object second) {
+        return first != null ? first : second;
+    }
+
     private List<String> asStringList(Object value) {
         if (value == null) {
             return List.of();
@@ -244,6 +296,7 @@ public class SentinelAiClient {
                 .rootCause("AI analysis is disabled")
                 .remediation("AI analysis is disabled")
                 .combinedAnalysis("AI analysis service is currently disabled. Enable it in application configuration.")
+                .toolsUsed(List.of())
                 .build();
     }
 
@@ -255,6 +308,7 @@ public class SentinelAiClient {
                 .rootCause("Error communicating with AI service: " + error)
                 .remediation("Check AI service availability and logs")
                 .combinedAnalysis("AI analysis could not be completed due to an error: " + error)
+                .toolsUsed(List.of())
                 .build();
     }
 }

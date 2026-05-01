@@ -40,8 +40,7 @@ public class SecurityConfig
                                 "/ws/**",
                                 "/actuator/**",
                                 "/api/instances/**",
-                                "/api/metrics/**",
-                                "/api/incidents/**"
+                                "/api/agent/tools/**"
                         )
                         .permitAll().anyRequest().authenticated())
                 .oauth2Login(oauth2 -> oauth2.successHandler(oAuth2SuccessHandler))
